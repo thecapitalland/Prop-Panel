@@ -1,0 +1,4 @@
+# Dependencies for tools/sync_history.py and dashboard/optimizer.py History path
+pandas>=2.0
+pyarrow>=14.0
+MetaTrader5>=5.0

@@ -1,0 +1,29 @@
+# Local OHLC cache and runtime account metadata
+History/**/*.parquet
+History/**/*.csv
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.log
+.DS_Store
+Thumbs.db
+
+# Generated / local runtime
+dashboard/tester_runs/
+dashboard/tester_results/
+dashboard/opt_job_status.json
+dashboard/opt_full_*.json
+dashboard/optimization_results.json
+
+# Editor / local secrets
+.env
+.env.*
+*.token
+*.pem
+
+# Generated Strategy Tester reports (fixtures live under tester/fixtures/)
+tester/*.htm
+tester/*.html

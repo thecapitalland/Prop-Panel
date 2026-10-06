@@ -1,0 +1,41 @@
+{
+  "synced_at": "2026-01-01T00:00:00+00:00",
+  "window_days": 240,
+  "symbols": ["EURUSD", "GBPUSD", "XAUUSD", "EURCAD"],
+  "timeframes": ["M5", "H1"],
+  "terminal": {
+    "id": "demo_mt5",
+    "label": "Demo MT5 Terminal",
+    "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
+    "login": 12345678,
+    "server": "Broker-Demo",
+    "name": "Demo User",
+    "company": "Example Broker"
+  },
+  "series": {
+    "EURUSD": {
+      "M5": {
+        "bars": 0,
+        "from": null,
+        "to": null,
+        "path": "History/EURUSD/M5.parquet",
+        "gaps": [],
+        "gap_count": 0,
+        "ok": false,
+        "mode": "example",
+        "note": "Run tools/sync_history.py to generate local metadata."
+      },
+      "H1": {
+        "bars": 0,
+        "from": null,
+        "to": null,
+        "path": "History/EURUSD/H1.parquet",
+        "gaps": [],
+        "gap_count": 0,
+        "ok": false,
+        "mode": "example",
+        "note": "Run tools/sync_history.py to generate local metadata."
+      }
+    }
+  }
+}

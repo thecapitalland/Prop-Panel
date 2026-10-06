@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prop Account Dashboard | Unified</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['DM Sans', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background: #0B0F19; color: #E5E7EB; }
+        .glass { background: rgba(17,24,39,.9); border: 1px solid rgba(255,255,255,.08); }
+        .pulse-live { animation: pulse-glow 2s infinite; }
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 0 0 rgba(16,185,129,.7); }
+            70% { box-shadow: 0 0 0 8px rgba(16,185,129,0); }
+            100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+        }
+        .bar { height: 6px; border-radius: 999px; background: #1F2937; overflow: hidden; }
+        .bar > i { display:block; height:100%; border-radius:999px; }
+    </style>
+</head>
+<body class="font-sans antialiased min-h-screen pb-12">
+
+<header class="glass sticky top-0 z-50 px-6 py-4 mb-6">
+    <div class="max-w-7xl mx-auto flex flex-col lg:flex-row justify-between gap-4 items-start lg:items-center">
+        <div class="flex items-center gap-3">
+            <div id="live-dot" class="w-3 h-3 rounded-full bg-amber-500"></div>
+            <div>
+                <h1 class="text-xl font-bold text-white flex items-center gap-2">
+                    Prop Account Dashboard
+                    <span id="live-badge" class="text-xs px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800/50 font-mono">CONNECTING</span>
+                </h1>
+                <p class="text-xs text-gray-400 font-mono" id="account-title">—</p>
+                <p class="text-[11px] text-gray-500" id="program-name">—</p>
+            </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-4 text-sm font-mono">
+            <div>
+                <span class="text-[10px] text-gray-500 block">TERMINAL</span>
+                <select id="terminal-select" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-cyan-300 min-w-[220px]"></select>
+            </div>
+            <div class="text-right">
+                <span class="text-[10px] text-gray-500 block">LAST UPDATE</span>
+                <span id="last-update" class="text-gray-200">--:--:--</span>
+                <span id="data-source" class="text-[10px] text-cyan-400/80 block">src —</span>
+            </div>
+            <div class="text-right">
+                <span class="text-[10px] text-gray-500 block">SERVER</span>
+                <span id="server-name" class="text-cyan-400">—</span>
+            </div>
+            <div class="text-right">
+                <span class="text-[10px] text-gray-500 block">DAILY RESET</span>
+                <span id="reset-countdown" class="text-emerald-400 font-semibold">--:--:--</span>
+            </div>
+        </div>
+    </div>
+    <div id="error-banner" class="max-w-7xl mx-auto mt-3 hidden px-4 py-2 rounded-lg bg-rose-950/60 border border-rose-800 text-rose-200 text-sm"></div>
+    <p class="max-w-7xl mx-auto mt-2 text-[11px] text-gray-500">⚠️ Approximate from MT5 history — official Moneta portal is the source of truth for challenge pass/fail.</p>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 sm:px-6">
+    <div class="flex items-center gap-3 mb-6 border-b border-gray-800 pb-3">
+        <button id="tab-live-btn" onclick="switchTab('live')" class="px-4 py-2 rounded-xl font-semibold text-sm bg-gradient-to-r from-cyan-600 to-blue-600 text-white">Live Monitor</button>
+        <button id="tab-opt-btn" onclick="switchTab('opt')" class="px-4 py-2 rounded-xl font-semibold text-sm bg-gray-800 text-gray-400 hover:text-white">Quant Strategy Lab</button>
+    </div>
+
+    <div id="tab-live-content">
+        <!-- Risk / objectives -->
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
+            <div class="glass rounded-2xl p-4">
+                <div class="text-[11px] text-gray-500 uppercase tracking-wide">Balance & Equity</div>
+                <div id="equity-val" class="text-2xl font-bold text-white mt-1">$0.00</div>
+                <div class="flex justify-between text-xs mt-2 font-mono">
+                    <span>Bal <span id="balance-val" class="text-gray-200">$0.00</span></span>
+                    <span>Float <span id="float-val">$0.00</span></span>
+                </div>
+                <div class="text-xs mt-2" id="total-pnl">PnL $0.00 (0%)</div>
+            </div>
+            <div class="glass rounded-2xl p-4">
+                <div class="flex justify-between items-center">
+                    <div class="text-[11px] text-gray-500 uppercase">Daily Loss Limit</div>
+                    <span id="daily-status" class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400">SAFE</span>
+                </div>
+                <div id="daily-loss-val" class="text-xl font-bold mt-1">$0 / $2,500</div>
+                <div id="daily-pct" class="text-sm text-rose-300 font-mono">0%</div>
+                <div class="bar mt-2"><i id="daily-bar" class="bg-rose-500" style="width:0%"></i></div>
+            </div>
+            <div class="glass rounded-2xl p-4">
+                <div class="flex justify-between items-center">
+                    <div class="text-[11px] text-gray-500 uppercase">Max Loss Limit</div>
+                    <span id="overall-status" class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400">SAFE</span>
+                </div>
+                <div id="overall-loss-val" class="text-xl font-bold mt-1">$0 / $5,000</div>
+                <div id="overall-pct" class="text-sm text-amber-300 font-mono">0%</div>
+                <div class="bar mt-2"><i id="overall-bar" class="bg-amber-500" style="width:0%"></i></div>
+            </div>
+            <div class="glass rounded-2xl p-4">
+                <div class="flex justify-between items-center">
+                    <div class="text-[11px] text-gray-500 uppercase">Profit Target</div>
+                    <span id="pt-status" class="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-300">IN PROGRESS</span>
+                </div>
+                <div id="pt-val" class="text-xl font-bold mt-1 text-emerald-400">$0 / $2,500</div>
+                <div id="pt-pct" class="text-sm text-gray-400 font-mono">0%</div>
+                <div class="bar mt-2"><i id="pt-bar" class="bg-emerald-500" style="width:0%"></i></div>
+            </div>
+        </div>
+
+        <!-- Today + trading days + stats -->
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
+            <div class="glass rounded-2xl p-4">
+                <div class="text-[11px] text-gray-500 uppercase">Today 0.5% Trading Day</div>
+                <div id="today-status" class="text-sm font-semibold mt-1 text-rose-400">NOT MET</div>
+                <div id="today-val" class="text-lg font-bold mt-1">$0 / $250</div>
+                <div class="bar mt-2"><i id="today-bar" class="bg-cyan-500" style="width:0%"></i></div>
+            </div>
+            <div class="glass rounded-2xl p-4">
+                <div class="flex justify-between items-center">
+                    <div class="text-[11px] text-gray-500 uppercase">Trading Days Progress</div>
+                    <span id="days-status" class="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-300">—</span>
+                </div>
+                <div id="days-val" class="text-2xl font-bold mt-1">0 / 3</div>
+                <div id="days-note" class="text-xs text-gray-400 mt-1">Profitable closed days (MT5 history)</div>
+                <div id="consistency-note" class="text-xs text-gray-500 mt-2">Consistency —</div>
+                <div id="history-note" class="text-[11px] text-amber-400/90 mt-2"></div>
+            </div>
+            <div class="glass rounded-2xl p-4">
+                <div class="text-[11px] text-gray-500 uppercase">Performance</div>
+                <div class="grid grid-cols-2 gap-2 mt-2 text-sm font-mono">
+                    <div title="Share of trades that closed in profit">WR <span id="winrate-val" class="text-white font-bold">0%</span></div>
+                    <div>PF <span id="pf-val" class="text-white font-bold">0</span></div>
+                    <div>Best <span id="best-trade" class="text-emerald-400">$0</span></div>
+                    <div>Worst <span id="worst-trade" class="text-rose-400">$0</span></div>
+                    <div>AvgW <span id="avg-win">$0</span></div>
+                    <div>AvgL <span id="avg-loss">$0</span></div>
+                    <div class="col-span-2 text-[10px] text-gray-500" title="Average win size ÷ average loss size (not win rate)">AvgW/AvgL <span id="win-ratio" class="text-white">0</span></div>
+                </div>
+            </div>
+            <div class="glass rounded-2xl p-4">
+                <div class="text-[11px] text-gray-500 uppercase">Equity Extremes / HFT</div>
+                <div class="text-sm mt-2 font-mono space-y-1">
+                    <div>High <span id="hi-eq" class="text-emerald-400">$0</span></div>
+                    <div>Low <span id="lo-eq" class="text-rose-400">$0</span></div>
+                    <div>&lt;30s trades <span id="under30-count" class="text-amber-300 font-bold">0</span></div>
+                    <div id="deals-count" class="text-gray-500">deals —</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+            <div class="glass rounded-2xl p-4 lg:col-span-2">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-semibold text-white">Balance / Equity vs Limits</h3>
+                    <span class="text-[10px] text-gray-500 font-mono">Target · Daily floor · Max floor</span>
+                </div>
+                <canvas id="equity-chart" height="120"></canvas>
+            </div>
+            <div class="glass rounded-2xl p-4">
+                <h3 class="font-semibold text-white mb-2">Most Traded Pairs</h3>
+                <canvas id="symbol-chart" height="180"></canvas>
+            </div>
+        </div>
+
+        <!-- Positions -->
+        <div class="glass rounded-2xl p-4 mb-5">
+            <h3 class="font-semibold text-white mb-3">Live Active Positions</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm font-mono">
+                    <thead class="text-gray-500 text-xs uppercase">
+                        <tr class="border-b border-gray-800">
+                            <th class="text-left py-2">Ticket</th>
+                            <th class="text-left">Symbol</th>
+                            <th class="text-left">Type</th>
+                            <th class="text-right">Volume</th>
+                            <th class="text-right">Open</th>
+                            <th class="text-right">Current</th>
+                            <th class="text-right">Profit</th>
+                            <th class="text-right">Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positions-body">
+                        <tr><td colspan="8" class="py-6 text-center text-gray-500">No active trades open right now.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="glass rounded-2xl p-4">
+            <h3 class="font-semibold text-white mb-3">Recent Closed Trades</h3>
+            <div class="overflow-x-auto max-h-80 overflow-y-auto">
+                <table class="w-full text-sm font-mono">
+                    <thead class="text-gray-500 text-xs uppercase sticky top-0 bg-gray-900">
+                        <tr class="border-b border-gray-800">
+                            <th class="text-left py-2">Close</th>
+                            <th class="text-left">Symbol</th>
+                            <th class="text-left">Type</th>
+                            <th class="text-right">Vol</th>
+                            <th class="text-right">PnL</th>
+                            <th class="text-right">Dur</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trades-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quant Strategy Lab: Python sweep (A) + real EA Strategy Tester (B) -->
+    <div id="tab-opt-content" class="hidden">
+        <div id="history-cache-panel" class="glass rounded-2xl p-4 mb-4 text-xs">
+            <div class="flex flex-wrap justify-between gap-2 items-start">
+                <div>
+                    <h3 class="text-sm font-bold text-white">History cache (Python only)</h3>
+                    <p class="text-gray-400 mt-0.5">Local parquet under <span class="font-mono text-cyan-400/90">History/</span> — fast simulator input. Does <b class="text-gray-300">not</b> execute <span class="font-mono">.mq5</span>.</p>
+                </div>
+                <span id="history-synced" class="text-[10px] font-mono text-gray-500">—</span>
+            </div>
+            <div id="history-symbols" class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-gray-300 font-mono"></div>
+        </div>
+
+        <div class="flex gap-2 mb-4">
+            <button id="mode-py-btn" onclick="setOptMode('python')" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-700 text-white">A · Fast Python sweep</button>
+            <button id="mode-ea-btn" onclick="setOptMode('tester')" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800 text-gray-400 hover:text-white">B · Real EA Strategy Tester</button>
+        </div>
+
+        <div id="opt-mode-python">
+            <div class="glass rounded-2xl p-5 mb-4">
+                <div class="mb-3">
+                    <h2 class="text-lg font-bold text-white">A — Fast simulation & parameter sweep</h2>
+                    <p class="text-xs text-gray-400 mt-1">اینجا جفت‌ارز را انتخاب کن و چند مقدار Risk / TP / SL / Gap بده — سیستم همه ترکیب‌ها را روی History تست می‌کند و جدول رتبه می‌دهد. <span class="text-amber-300/90">ربات واقعی MQ5 نیست</span>؛ برای تست خودِ EA برو Mode B.</p>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+                    <label class="text-xs text-gray-400">جفت‌ارز / Symbol
+                        <select id="opt-symbol" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white">
+                            <option>EURUSD</option><option>GBPUSD</option><option>XAUUSD</option><option>EURCAD</option>
+                        </select>
+                    </label>
+                    <label class="text-xs text-gray-400">Risk % (فقط عدد + کاما)
+                        <input id="opt-risks" type="text" value="0.3, 0.5" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-white"/>
+                    </label>
+                    <label class="text-xs text-gray-400">TP / profit_x
+                        <input id="opt-tps" type="text" placeholder="مثال: 0.002, 0.003, 0.004" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-white"/>
+                    </label>
+                    <label class="text-xs text-gray-400">SL gap
+                        <input id="opt-sls" type="text" placeholder="مثال: 0.0015, 0.002" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-white"/>
+                    </label>
+                    <label class="text-xs text-gray-400">Level gap
+                        <input id="opt-gaps" type="text" placeholder="مثال: 0.001, 0.0012" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-white"/>
+                    </label>
+                    <label class="text-xs text-gray-400">Show top N
+                        <select id="opt-topn" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white">
+                            <option value="20">20</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                            <option value="500">500</option>
+                        </select>
+                    </label>
+                    <div class="flex items-end">
+                        <button onclick="triggerOptimization()" id="run-opt-btn" class="w-full px-4 py-2 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-500 text-white">Optimize this symbol</button>
+                    </div>
+                </div>
+                <p id="opt-grid-hint" class="text-[11px] text-gray-500">فقط عدد بنویس (نه <span class="font-mono">FX:</span>). ترکیب‌ها = Risk × TP × SL × Gap × ۲ فیلتر روز. جدول فقط Top N را نگه می‌دارد.</p>
+                <p id="opt-run-stats" class="text-[11px] font-mono text-cyan-400/90 mt-1"></p>
+            </div>
+        </div>
+
+        <div id="opt-mode-tester" class="hidden">
+            <div class="glass rounded-2xl p-5 mb-4">
+                <div class="mb-3">
+                    <h2 class="text-lg font-bold text-white">B — Real EA backtest</h2>
+                    <p class="text-xs text-gray-400 mt-1">جفت‌ارز + استراتژی را جدا انتخاب کن، بعد Risk / TP / SL / Gap را برای <b class="text-gray-300">یک</b> بک‌تست واقعی روی <span class="font-mono text-amber-300/90">OrderLevelControl_Prop_EA</span> تنظیم کن. برای امتحان ده‌ها ترکیب از Mode A استفاده کن، بعد بهترین‌ها را اینجا validate کن.</p>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+                    <label class="text-xs text-gray-400">جفت‌ارز / Symbol
+                        <select id="tester-symbol" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white">
+                            <option>EURUSD</option><option>GBPUSD</option><option>XAUUSD</option><option>EURCAD</option>
+                        </select>
+                    </label>
+                    <label class="text-xs text-gray-400">استراتژی
+                        <select id="tester-strategy" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white">
+                            <option value="Asian Sweep">Asian Sweep</option>
+                            <option value="NY ORB">NY ORB</option>
+                        </select>
+                    </label>
+                    <label class="text-xs text-gray-400">From
+                        <input id="tester-from" type="text" placeholder="2025.12.07" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-white"/>
+                    </label>
+                    <label class="text-xs text-gray-400">To
+                        <input id="tester-to" type="text" placeholder="2026.08.04" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-white"/>
+                    </label>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                    <label class="text-xs text-gray-400">Risk %
+                        <input id="tester-risk" type="number" step="0.1" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-white"/>
+                    </label>
+                    <label class="text-xs text-gray-400">TP (profit_x)
+                        <input id="tester-tp" type="number" step="any" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-white"/>
+                    </label>
+                    <label class="text-xs text-gray-400">SL gap
+                        <input id="tester-sl" type="number" step="any" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-white"/>
+                    </label>
+                    <label class="text-xs text-gray-400">Level gap
+                        <input id="tester-gap" type="number" step="any" class="mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono text-white"/>
+                    </label>
+                </div>
+                <input type="hidden" id="tester-preset" value=""/>
+                <div class="flex flex-wrap gap-3 items-center mb-3">
+                    <label class="text-xs text-gray-400 flex items-center gap-2">
+                        <input id="tester-launch" type="checkbox" class="rounded border-gray-600"/>
+                        <span>Headless launch if terminal <b>not</b> already open</span>
+                    </label>
+                    <button type="button" onclick="fillTesterDefaults()" class="text-[11px] text-cyan-400 hover:underline">Reset params to symbol defaults</button>
+                </div>
+                <div class="flex flex-wrap gap-2 items-center">
+                    <button onclick="triggerTesterRun()" id="run-tester-btn" class="px-4 py-2 rounded-xl font-bold text-xs bg-amber-600 hover:bg-amber-500 text-white">Run EA Backtest</button>
+                    <button onclick="importSmokeReport()" class="px-3 py-2 rounded-xl font-semibold text-xs bg-gray-800 text-gray-300 hover:text-white border border-gray-700">Import sample report</button>
+                    <span id="tester-status" class="text-xs font-mono text-gray-400"></span>
+                </div>
+                <pre id="tester-manual" class="hidden mt-3 p-3 rounded-lg bg-black/40 text-[11px] font-mono text-cyan-300/90 overflow-x-auto whitespace-pre-wrap"></pre>
+            </div>
+        </div>
+
+        <div class="glass rounded-2xl p-4 overflow-x-auto">
+            <div class="flex justify-between items-center mb-2">
+                <span id="opt-table-caption" class="text-[11px] text-gray-500 uppercase tracking-wide">Strategy Lab results</span>
+                <select id="opt-symbol-ea" class="hidden bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-xs">
+                    <option value="">All symbols</option>
+                    <option>EURUSD</option><option>GBPUSD</option><option>XAUUSD</option><option>EURCAD</option>
+                </select>
+            </div>
+            <table class="w-full text-xs font-mono">
+                <thead class="text-gray-500 uppercase">
+                    <tr class="border-b border-gray-800">
+                        <th class="py-2 text-left">#</th>
+                        <th class="text-left">Strategy</th>
+                        <th>Risk%</th><th>TP</th><th>SL</th><th>Gap</th><th>Filter</th>
+                        <th>Trades</th><th>WR</th><th>PF</th><th>Net%</th><th>DD%</th><th>Score</th>
+                    </tr>
+                </thead>
+                <tbody id="opt-tbody"><tr><td colspan="13" class="py-8 text-center text-gray-500">Loading…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</main>
+
+<script>
+let equityChart = null, symbolChart = null;
+let optData = null, currentOptSymbol = 'EURUSD';
+let testerData = null, optMode = 'python';
+let lastGoodData = null;
+let testerPollTimer = null;
+let liveInFlight = false;
+let optJobPollTimer = null;
+
+function switchTab(tab) {
+    const live = tab === 'live';
+    document.getElementById('tab-live-content').classList.toggle('hidden', !live);
+    document.getElementById('tab-opt-content').classList.toggle('hidden', live);
+    document.getElementById('tab-live-btn').className = live
+        ? 'px-4 py-2 rounded-xl font-semibold text-sm bg-gradient-to-r from-cyan-600 to-blue-600 text-white'
+        : 'px-4 py-2 rounded-xl font-semibold text-sm bg-gray-800 text-gray-400 hover:text-white';
+    document.getElementById('tab-opt-btn').className = !live
+        ? 'px-4 py-2 rounded-xl font-semibold text-sm bg-gradient-to-r from-emerald-600 to-teal-600 text-white'
+        : 'px-4 py-2 rounded-xl font-semibold text-sm bg-gray-800 text-gray-400 hover:text-white';
+    if (!live) {
+        fetchHistoryStatus();
+        fetchTesterPresets();
+        if (optMode === 'python') fetchOptimizationResults();
+        else fetchTesterResults();
+    }
+}
+
+function setOptMode(mode) {
+    optMode = mode;
+    const py = mode === 'python';
+    document.getElementById('opt-mode-python').classList.toggle('hidden', !py);
+    document.getElementById('opt-mode-tester').classList.toggle('hidden', py);
+    document.getElementById('opt-symbol-ea').classList.toggle('hidden', py);
+    document.getElementById('mode-py-btn').className = py
+        ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-700 text-white'
+        : 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800 text-gray-400 hover:text-white';
+    document.getElementById('mode-ea-btn').className = !py
+        ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-700 text-white'
+        : 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800 text-gray-400 hover:text-white';
+    document.getElementById('opt-table-caption').innerText = py
+        ? 'Python optimizer results'
+        : 'MT5 Strategy Tester results (real EA)';
+    if (py) fetchOptimizationResults();
+    else fetchTesterResults();
+}
+
+async function fetchHistoryStatus() {
+    try {
+        const res = await fetch('/api/history/status');
+        const data = await res.json();
+        const el = document.getElementById('history-symbols');
+        const sync = document.getElementById('history-synced');
+        if (!data.ok) {
+            el.innerHTML = `<div class="text-rose-400 col-span-4">${esc(data.error || 'History unavailable')}</div>`;
+            sync.innerText = '';
+            return;
+        }
+        sync.innerText = data.synced_at ? `synced ${data.synced_at.slice(0, 19)} · ${data.window_days || '?'}d` : '';
+        el.innerHTML = (data.symbols || []).map(s => `
+            <div class="rounded-lg border border-gray-800 bg-black/20 px-2 py-1.5">
+                <div class="text-cyan-300 font-semibold">${esc(s.symbol)}</div>
+                <div class="text-[10px] text-gray-500">M5 ${esc(s.m5_bars)} · H1 ${esc(s.h1_bars)}</div>
+                <div class="text-[10px] text-gray-600 truncate">${esc((s.from || '').slice(0, 10))} → ${esc((s.to || '').slice(0, 10))}</div>
+            </div>`).join('');
+        if (data.default_from) document.getElementById('tester-from').value = data.default_from;
+        if (data.default_to) document.getElementById('tester-to').value = data.default_to;
+    } catch (e) { console.error(e); }
+}
+
+let testerPresets = [];
+
+const SYMBOL_DEFAULTS = {
+    XAUUSD: { risk_pct: 0.3, profit_x: 10, sl_gap: 7, level_gap: 5, strategy: 'NY ORB',
+              opt_risks: '0.3, 0.5', opt_tps: '8, 10, 12', opt_sls: '7, 10', opt_gaps: '5' },
+    EURUSD: { risk_pct: 0.5, profit_x: 0.002, sl_gap: 0.002, level_gap: 0.001, strategy: 'Asian Sweep',
+              opt_risks: '0.3, 0.5', opt_tps: '0.002, 0.003, 0.004', opt_sls: '0.0015, 0.002', opt_gaps: '0.001' },
+    GBPUSD: { risk_pct: 0.5, profit_x: 0.003, sl_gap: 0.002, level_gap: 0.001, strategy: 'Asian Sweep',
+              opt_risks: '0.3, 0.5', opt_tps: '0.002, 0.003, 0.004', opt_sls: '0.0015, 0.002', opt_gaps: '0.001' },
+    EURCAD: { risk_pct: 0.5, profit_x: 0.002, sl_gap: 0.002, level_gap: 0.001, strategy: 'Asian Sweep',
+              opt_risks: '0.3, 0.5', opt_tps: '0.002, 0.003, 0.004', opt_sls: '0.0015, 0.002', opt_gaps: '0.001' },
+};
+
+function fillTesterDefaults() {
+    const sym = document.getElementById('tester-symbol').value;
+    const d = SYMBOL_DEFAULTS[sym] || SYMBOL_DEFAULTS.EURUSD;
+    document.getElementById('tester-risk').value = d.risk_pct;
+    document.getElementById('tester-tp').value = d.profit_x;
+    document.getElementById('tester-sl').value = d.sl_gap;
+    document.getElementById('tester-gap').value = d.level_gap;
+    document.getElementById('tester-strategy').value = d.strategy;
+    const match = testerPresets.find(p => p.symbol === sym);
+    if (match) document.getElementById('tester-preset').value = match.id;
+}
+
+function fillOptDefaultsForSymbol() {
+    const sym = document.getElementById('opt-symbol').value;
+    const d = SYMBOL_DEFAULTS[sym] || SYMBOL_DEFAULTS.EURUSD;
+    document.getElementById('opt-risks').value = d.opt_risks;
+    document.getElementById('opt-tps').value = d.opt_tps;
+    document.getElementById('opt-sls').value = d.opt_sls;
+    document.getElementById('opt-gaps').value = d.opt_gaps;
+}
+
+async function fetchTesterPresets() {
+    try {
+        const res = await fetch('/api/tester/presets');
+        const data = await res.json();
+        testerPresets = data.presets || [];
+        fillTesterDefaults();
+    } catch (e) { console.error(e); }
+}
+
+function renderRows(rows) {
+    const tbody = document.getElementById('opt-tbody');
+    if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="13" class="py-8 text-center text-gray-400">No results yet.</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = rows.map((r, i) => `
+        <tr class="border-b border-gray-800/50 text-center">
+            <td class="py-2 text-left">${i+1}</td>
+            <td class="text-left">${esc(r.strategy)}${r.symbol ? ` <span class="text-gray-600">· ${esc(r.symbol)}</span>` : ''}</td>
+            <td>${esc(r.risk_pct)}</td><td>${esc(r.profit_x)}</td><td>${esc(r.sl_gap)}</td><td>${esc(r.level_gap)}</td>
+            <td>${esc(r.day_filter)}</td><td>${esc(r.total_trades)}</td><td>${esc(r.win_rate)}</td>
+            <td>${esc(r.profit_factor)}</td><td>${esc(r.net_profit_pct)}</td><td>${esc(r.max_drawdown_pct)}</td>
+            <td class="text-emerald-400 font-bold">${esc(r.score)}</td>
+        </tr>`).join('');
+}
+
+function money(v) {
+    return '$' + Number(v || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function setStatus(el, status) {
+    const map = {
+        SAFE: 'bg-emerald-950 text-emerald-400',
+        WARNING: 'bg-amber-950 text-amber-300',
+        BREACHED: 'bg-rose-950 text-rose-300',
+        MET: 'bg-emerald-950 text-emerald-400',
+        IN_PROGRESS: 'bg-gray-800 text-gray-300',
+        NOT_MET: 'bg-rose-950 text-rose-300',
+    };
+    el.className = 'text-[10px] px-2 py-0.5 rounded-full ' + (map[status] || map.IN_PROGRESS);
+    el.innerText = status.replace('_', ' ');
+}
+
+function fillTerminals(terminals, activeId) {
+    const sel = document.getElementById('terminal-select');
+    const want = activeId || (terminals || []).find(t => t.active)?.id || '';
+    sel.innerHTML = '';
+    (terminals || []).forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = `${t.label}${t.exists ? '' : ' (missing)'}${t.active ? ' ●' : ''}`;
+        if (t.id === want) opt.selected = true;
+        sel.appendChild(opt);
+    });
+    if (want) sel.value = want;
+}
+
+document.getElementById('terminal-select').addEventListener('change', async (e) => {
+    const id = e.target.value;
+    await fetch('/api/terminals/select', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id})
+    });
+    updateDashboard();
+});
+
+function chartSignature(parts) {
+    return JSON.stringify(parts);
+}
+let equitySig = '', symbolSig = '';
+
+function updateEquityChart(data) {
+    const curve = (data.chart && data.chart.equity_curve) || data.equity_curve || [];
+    const labels = curve.map(p => (p.time || '').slice(5, 16));
+    const bal = curve.map(p => p.balance);
+    const lines = (data.chart && data.chart.lines) || {};
+    const pt = Array(labels.length).fill(lines.profit_target_level || null);
+    const maxFloor = Array(labels.length).fill(lines.max_loss_floor || null);
+    const dayFloor = Array(labels.length).fill(lines.daily_loss_floor_today || null);
+    const sig = chartSignature([labels, bal, pt[0], maxFloor[0], dayFloor[0]]);
+    if (sig === equitySig && equityChart) return;
+    equitySig = sig;
+
+    const ctx = document.getElementById('equity-chart').getContext('2d');
+    const payload = {
+        labels,
+        datasets: [
+            { label: 'Balance', data: bal, borderColor: '#10B981', tension: .2, pointRadius: 0, borderWidth: 2 },
+            { label: 'Profit Target', data: pt, borderColor: '#E5E7EB', borderDash: [6,4], pointRadius: 0, borderWidth: 1 },
+            { label: 'Daily Loss Floor', data: dayFloor, borderColor: '#F59E0B', borderDash: [4,4], pointRadius: 0, borderWidth: 1 },
+            { label: 'Max Loss Floor', data: maxFloor, borderColor: '#F43F5E', borderDash: [2,2], pointRadius: 0, borderWidth: 1 },
+        ]
+    };
+    if (equityChart) {
+        equityChart.data = payload;
+        equityChart.update('none');
+        return;
+    }
+    equityChart = new Chart(ctx, {
+        type: 'line',
+        data: payload,
+        options: {
+            responsive: true,
+            animation: false,
+            plugins: { legend: { labels: { color: '#9CA3AF', boxWidth: 12 } } },
+            scales: {
+                x: { ticks: { color: '#6B7280', maxTicksLimit: 8 }, grid: { color: '#1F2937' } },
+                y: { ticks: { color: '#6B7280' }, grid: { color: '#1F2937' } }
+            }
+        }
+    });
+}
+
+function updateSymbolChart(stats) {
+    // Closed trades only, ranked by trade count (not open junk / other charts)
+    const rows = (stats || []).filter(s => s.trades > 0).slice(0, 8);
+    const labels = rows.map(s => `${s.symbol} (${s.trades})`);
+    const values = rows.map(s => s.trades);
+    const colors = ['#06B6D4','#10B981','#F59E0B','#8B5CF6','#F43F5E','#3B82F6','#A3E635','#EC4899'];
+    const sig = chartSignature([labels, values]);
+    if (sig === symbolSig && symbolChart) return;
+    symbolSig = sig;
+
+    const ctx = document.getElementById('symbol-chart').getContext('2d');
+    const payload = {
+        labels: labels.length ? labels : ['No closed trades'],
+        datasets: [{
+            data: values.length ? values : [1],
+            backgroundColor: labels.length ? colors.slice(0, labels.length) : ['#374151'],
+        }]
+    };
+    if (symbolChart) {
+        symbolChart.data = payload;
+        symbolChart.update('none');
+        return;
+    }
+    symbolChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: payload,
+        options: {
+            responsive: true,
+            animation: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#9CA3AF', boxWidth: 10, font: { size: 11 } }
+                }
+            }
+        }
+    });
+}
+
+function renderPositions(rows) {
+    const body = document.getElementById('positions-body');
+    if (!rows || !rows.length) {
+        body.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-gray-500">No active trades open right now.</td></tr>';
+        return;
+    }
+    body.innerHTML = rows.map(p => `
+        <tr class="border-b border-gray-800/60">
+            <td class="py-2">${esc(p.ticket)}</td>
+            <td>${esc(p.symbol)}</td>
+            <td class="${p.type==='BUY'?'text-emerald-400':'text-rose-400'}">${esc(p.type)}</td>
+            <td class="text-right">${esc(p.volume)}</td>
+            <td class="text-right">${Number(p.price_open).toFixed(5)}</td>
+            <td class="text-right">${Number(p.price_current).toFixed(5)}</td>
+            <td class="text-right ${p.profit>=0?'text-emerald-400':'text-rose-400'}">${money(p.profit)}</td>
+            <td class="text-right">${esc(p.duration_sec)}s</td>
+        </tr>`).join('');
+}
+
+function renderTrades(rows) {
+    const body = document.getElementById('trades-body');
+    if (!rows || !rows.length) {
+        body.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-gray-500">No closed trades yet.</td></tr>';
+        return;
+    }
+    body.innerHTML = rows.slice(0, 40).map(t => `
+        <tr class="border-b border-gray-800/40">
+            <td class="py-1.5">${esc(t.close_time)}</td>
+            <td>${esc(t.symbol)}</td>
+            <td class="${t.type==='BUY'?'text-emerald-400':'text-rose-400'}">${esc(t.type)}</td>
+            <td class="text-right">${esc(t.volume)}</td>
+            <td class="text-right ${t.profit>=0?'text-emerald-400':'text-rose-400'}">${money(t.profit)}</td>
+            <td class="text-right">${esc(t.duration_str)}${t.is_under_30s?' ⚡':''}</td>
+        </tr>`).join('');
+}
+
+async function updateDashboard() {
+    if (liveInFlight) return; // never pile up polls while previous /api/data hangs
+    liveInFlight = true;
+    const banner = document.getElementById('error-banner');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+        const res = await fetch('/api/data', { signal: ctrl.signal });
+        const data = await res.json();
+        fillTerminals(data.terminals, data.terminal && data.terminal.id);
+
+        if (!data.ok) {
+            document.getElementById('live-dot').className = 'w-3 h-3 rounded-full bg-rose-500';
+            document.getElementById('live-badge').className = 'text-xs px-2 py-0.5 rounded-full bg-rose-950 text-rose-300 border border-rose-800/50 font-mono';
+            document.getElementById('live-badge').innerText = 'OFFLINE';
+            banner.classList.remove('hidden');
+            banner.innerText = (data.error || 'MT5 unavailable') + (data.hint ? ' — ' + data.hint : '');
+            document.getElementById('last-update').innerText = new Date().toLocaleTimeString();
+            return;
+        }
+
+        lastGoodData = data;
+        banner.classList.add('hidden');
+        document.getElementById('live-dot').className = 'w-3 h-3 rounded-full bg-emerald-500 pulse-live';
+        document.getElementById('live-badge').className = 'text-xs px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/50 font-mono';
+        document.getElementById('live-badge').innerText = data.data_source === 'ea_bridge' ? 'LIVE EA' : 'LIVE MT5';
+        document.getElementById('last-update').innerText = new Date().toLocaleTimeString();
+        const srcEl = document.getElementById('data-source');
+        if (srcEl) {
+            if (data.data_source === 'ea_bridge') {
+                const b = data.bridge || {};
+                srcEl.innerText = `EA bridge · ${b.deals_count ?? '?'} deals · age ${b.age_sec ?? '?'}s`;
+                srcEl.className = 'text-[10px] text-emerald-400 block';
+            } else if (data.data_source === 'mt5_api') {
+                srcEl.innerText = 'MT5 API fallback';
+                srcEl.className = 'text-[10px] text-amber-300 block';
+            } else {
+                srcEl.innerText = 'src —';
+                srcEl.className = 'text-[10px] text-cyan-400/80 block';
+            }
+        }
+        document.getElementById('server-name').innerText = data.account.server || '—';
+        document.getElementById('account-title').innerText = `Account: ${data.account.login} | ${data.account.name || ''}`;
+        document.getElementById('program-name').innerText = (data.program && data.program.name) || '';
+        document.getElementById('reset-countdown').innerText = (data.daily_reset && data.daily_reset.label) || '--:--:--';
+
+        const L = data.live;
+        document.getElementById('equity-val').innerText = money(L.equity);
+        document.getElementById('balance-val').innerText = money(L.balance);
+        const fv = document.getElementById('float-val');
+        fv.innerText = money(L.floating);
+        fv.className = L.floating >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold';
+        document.getElementById('total-pnl').innerText = `PnL ${money(L.total_pnl)} (${L.total_pnl_pct}%)`;
+        document.getElementById('hi-eq').innerText = money(L.highest_equity);
+        document.getElementById('lo-eq').innerText = money(L.lowest_equity);
+
+        const d = data.daily_drawdown;
+        document.getElementById('daily-loss-val').innerText = `${money(d.current_daily_loss)} / ${money(d.limit_usd)}`;
+        document.getElementById('daily-pct').innerText = `${d.used_of_limit_pct.toFixed(2)}% of limit`;
+        document.getElementById('daily-bar').style.width = `${Math.min(100, d.used_of_limit_pct)}%`;
+        setStatus(document.getElementById('daily-status'), d.status);
+
+        const o = data.overall_drawdown;
+        document.getElementById('overall-loss-val').innerText = `${money(o.current_overall_loss)} / ${money(o.limit_usd)}`;
+        document.getElementById('overall-pct').innerText = `${o.used_of_limit_pct.toFixed(2)}% of limit`;
+        document.getElementById('overall-bar').style.width = `${Math.min(100, o.used_of_limit_pct)}%`;
+        setStatus(document.getElementById('overall-status'), o.status);
+
+        const pt = data.profit_target;
+        document.getElementById('pt-val').innerText = `${money(pt.current_pnl)} / ${money(pt.target_usd)}`;
+        document.getElementById('pt-pct').innerText = `${pt.progress_pct}% · remaining ${money(pt.remaining_usd)}`;
+        document.getElementById('pt-bar').style.width = `${Math.min(100, pt.progress_pct)}%`;
+        setStatus(document.getElementById('pt-status'), pt.status);
+
+        const td = data.today_trading_day;
+        document.getElementById('today-val').innerText = `${money(td.realized_pnl)} / ${money(td.target_usd)}`;
+        document.getElementById('today-bar').style.width = `${Math.min(100, Math.max(0, td.progress_pct))}%`;
+        document.getElementById('today-status').innerText = td.status.replace('_',' ');
+        document.getElementById('today-status').className = 'text-sm font-semibold mt-1 ' + (td.hit ? 'text-emerald-400' : 'text-rose-400');
+
+        const days = data.trading_days;
+        const counted = days.counted_days ?? days.profitable_days ?? days.qualifying_days ?? 0;
+        document.getElementById('days-val').innerText = `${counted} / ${days.required}`;
+        setStatus(document.getElementById('days-status'), days.target_met ? 'MET' : 'IN_PROGRESS');
+        document.getElementById('days-note').innerText = days.target_met
+            ? `Target Met ✓ · ≥0.5% days: ${days.days_hitting_05pct ?? 0}`
+            : `Profitable days toward min ${days.required} · ≥0.5% days: ${days.days_hitting_05pct ?? 0}`;
+        document.getElementById('consistency-note').innerText = `Consistency ${days.consistency_pct}% (cap ${days.consistency_cap_pct}%) · best day ${money(days.best_day_profit)}`;
+        const histEl = document.getElementById('history-note');
+        if (days.history_start && days.history_end) {
+            histEl.innerText = `MT5 history used: ${days.history_start} → ${days.history_end}. If Moneta portal shows more days, scroll/load Account History in that terminal.`;
+        } else {
+            histEl.innerText = '';
+        }
+
+        const s = data.stats;
+        document.getElementById('winrate-val').innerText = `${s.win_rate}%`;
+        document.getElementById('pf-val').innerText = s.profit_factor;
+        document.getElementById('best-trade').innerText = money(s.best_trade);
+        document.getElementById('worst-trade').innerText = money(s.worst_trade);
+        document.getElementById('avg-win').innerText = money(s.avg_win);
+        document.getElementById('avg-loss').innerText = money(s.avg_loss);
+        document.getElementById('win-ratio').innerText = s.win_ratio;
+        document.getElementById('under30-count').innerText = s.under_30s_count;
+        const dc = document.getElementById('deals-count');
+        if (dc) dc.innerText = `${s.total_trades} closed · hist ${days.history_start || '?'}→${days.history_end || '?'}`;
+
+        updateEquityChart(data);
+        updateSymbolChart(data.symbol_stats);
+        renderPositions(data.open_positions);
+        renderTrades(data.recent_trades);
+    } catch (err) {
+        const aborted = err && (err.name === 'AbortError' || String(err).includes('abort'));
+        banner.classList.remove('hidden');
+        banner.innerText = aborted
+            ? 'Live poll timed out (8s). Server may be busy — retrying…'
+            : ('Dashboard poll failed: ' + err);
+        if (!aborted) console.error(err);
+        document.getElementById('live-badge').innerText = aborted ? 'SLOW' : 'OFFLINE';
+    } finally {
+        clearTimeout(timer);
+        liveInFlight = false;
+    }
+}
+
+async function fetchOptimizationResults() {
+    try {
+        const res = await fetch('/api/optimization/results');
+        const data = await res.json();
+        if (!data.error) { optData = data; renderOptimizationTable(); }
+        else if (optMode === 'python') {
+            document.getElementById('opt-tbody').innerHTML =
+                `<tr><td colspan="13" class="py-8 text-center text-gray-400">${esc(data.error)}</td></tr>`;
+        }
+    } catch (e) { console.error(e); }
+}
+function renderOptimizationTable() {
+    if (optMode !== 'python') return;
+    currentOptSymbol = document.getElementById('opt-symbol').value;
+    const rows = (optData && optData[currentOptSymbol]) || [];
+    const statsEl = document.getElementById('opt-run-stats');
+    const lr = optData && optData.last_run;
+    if (statsEl) {
+        if (lr && lr.symbol === currentOptSymbol && lr.stats) {
+            const s = lr.stats;
+            statsEl.innerText =
+                `Last run: ${s.combos} combos tried · ${s.qualified} with ≥${s.min_trades} trades · showing top ${s.kept}/${s.top_n}`;
+        } else if (lr && lr.symbol !== currentOptSymbol) {
+            statsEl.innerText = `Last run was ${lr.symbol} — switch symbol or re-run.`;
+        } else {
+            statsEl.innerText = '';
+        }
+    }
+    if (!rows.length) {
+        document.getElementById('opt-tbody').innerHTML =
+            `<tr><td colspan="13" class="py-8 text-center text-gray-400">No optimization data for ${esc(currentOptSymbol)}.</td></tr>`;
+        return;
+    }
+    renderRows(rows);
+}
+document.getElementById('opt-symbol').addEventListener('change', () => {
+    fillOptDefaultsForSymbol();
+    renderOptimizationTable();
+});
+document.getElementById('tester-symbol').addEventListener('change', fillTesterDefaults);
+
+async function fetchTesterResults() {
+    try {
+        const res = await fetch('/api/tester/results');
+        testerData = await res.json();
+        renderTesterTable();
+    } catch (e) { console.error(e); }
+}
+function renderTesterTable() {
+    if (optMode !== 'tester') return;
+    const filter = document.getElementById('opt-symbol-ea').value;
+    let rows = (testerData && testerData.results) || [];
+    if (filter) rows = rows.filter(r => r.symbol === filter);
+    if (!rows.length) {
+        document.getElementById('opt-tbody').innerHTML =
+            `<tr><td colspan="13" class="py-8 text-center text-gray-400">No Strategy Tester results yet. Run an EA backtest or import the sample report.</td></tr>`;
+        return;
+    }
+    renderRows(rows);
+}
+document.getElementById('opt-symbol-ea').addEventListener('change', renderTesterTable);
+
+function _countNums(s) {
+    const m = String(s || '').match(/[-+]?(?:\d+\.?\d*|\.\d+)/g);
+    return m ? m.length : 0;
+}
+
+async function triggerOptimization() {
+    const btn = document.getElementById('run-opt-btn');
+    const statsEl = document.getElementById('opt-run-stats');
+    btn.disabled = true; btn.innerText = 'Optimizing…';
+    if (optJobPollTimer) { clearInterval(optJobPollTimer); optJobPollTimer = null; }
+    try {
+        const body = {
+            symbol: document.getElementById('opt-symbol').value,
+            risk_pcts: document.getElementById('opt-risks').value,
+            profit_xs: document.getElementById('opt-tps').value,
+            sl_gaps: document.getElementById('opt-sls').value,
+            level_gaps: document.getElementById('opt-gaps').value,
+            top_n: parseInt(document.getElementById('opt-topn').value, 10) || 50,
+        };
+        const est = _countNums(body.risk_pcts) * _countNums(body.profit_xs)
+                  * _countNums(body.sl_gaps) * _countNums(body.level_gaps) * 2;
+        if (statsEl) statsEl.innerText = `Starting detached process (~${est} combos)… Live Monitor stays free.`;
+        const res = await fetch('/api/optimization/run', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const started = await res.json();
+        if (!res.ok || started.ok === false) {
+            btn.disabled = false; btn.innerText = 'Optimize this symbol';
+            if (statsEl) statsEl.innerText = started.error || started.message || 'busy';
+            return;
+        }
+        if (statsEl) statsEl.innerText = (started.message || 'started') + ` · pid ${started.pid || '?'}`;
+
+        let n = 0;
+        optJobPollTimer = setInterval(async () => {
+            n++;
+            try {
+                const sr = await fetch('/api/optimization/status');
+                const st = await sr.json();
+                if (statsEl) {
+                    statsEl.innerText = `Optimizer ${st.status || '?'} · ${st.symbol || body.symbol}`
+                        + (st.error ? ` · ${st.error}` : '')
+                        + (st.process_running ? ' (running)' : '');
+                }
+                if (st.status === 'done' || st.status === 'failed' || (!st.process_running && st.status !== 'starting' && st.status !== 'running' && n > 2)) {
+                    clearInterval(optJobPollTimer); optJobPollTimer = null;
+                    await fetchOptimizationResults();
+                    btn.disabled = false; btn.innerText = 'Optimize this symbol';
+                    if (st.status === 'failed' && statsEl) statsEl.innerText = 'Failed: ' + (st.error || 'unknown');
+                }
+            } catch (e) { /* keep polling */ }
+            if (n >= 180) {
+                clearInterval(optJobPollTimer); optJobPollTimer = null;
+                btn.disabled = false; btn.innerText = 'Optimize this symbol';
+                await fetchOptimizationResults();
+            }
+        }, 2000);
+    } catch (e) {
+        btn.disabled = false; btn.innerText = 'Optimize this symbol';
+        if (statsEl) statsEl.innerText = 'Run failed — check console / Flask log';
+    }
+}
+
+async function triggerTesterRun() {
+    const btn = document.getElementById('run-tester-btn');
+    const st = document.getElementById('tester-status');
+    const man = document.getElementById('tester-manual');
+    btn.disabled = true; btn.innerText = 'Starting…';
+    st.innerText = '';
+    man.classList.add('hidden');
+    if (testerPollTimer) { clearInterval(testerPollTimer); testerPollTimer = null; }
+    try {
+        const body = {
+            symbol: document.getElementById('tester-symbol').value,
+            strategy: document.getElementById('tester-strategy').value,
+            preset_id: document.getElementById('tester-preset').value || undefined,
+            from_date: document.getElementById('tester-from').value,
+            to_date: document.getElementById('tester-to').value,
+            launch: document.getElementById('tester-launch').checked,
+            risk_pct: document.getElementById('tester-risk').value,
+            profit_x: document.getElementById('tester-tp').value,
+            sl_gap: document.getElementById('tester-sl').value,
+            level_gap: document.getElementById('tester-gap').value,
+        };
+        const res = await fetch('/api/tester/run', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+            st.innerText = data.error || 'failed';
+            st.className = 'text-xs font-mono text-rose-400';
+            btn.disabled = false; btn.innerText = 'Run EA Backtest';
+            return;
+        }
+        st.className = 'text-xs font-mono text-amber-300';
+        st.innerText = `${data.status} · ${data.launch_mode} · ${data.id}`;
+        if (data.launch_error || data.launch_mode === 'watch' || data.status === 'awaiting_manual') {
+            man.classList.remove('hidden');
+            man.textContent =
+                (data.launch_error ? data.launch_error + '\n\n' : '') +
+                'Manual start (when safe — do not stop a live terminal):\n' +
+                (data.manual_cmd || '') +
+                '\n\nOr: MT5 → View → Strategy Tester → load Expert + .set, dates, Start.\n' +
+                'Report watch: ' + (data.report_path || '') +
+                '\nIni: ' + (data.ini_path || '');
+        }
+        const runId = data.id;
+        testerPollTimer = setInterval(async () => {
+            try {
+                const r = await fetch('/api/tester/status/' + runId);
+                const s = await r.json();
+                st.innerText = `${s.status}${s.error ? ' · ' + s.error : ''}`;
+                if (s.status === 'completed') {
+                    clearInterval(testerPollTimer); testerPollTimer = null;
+                    st.className = 'text-xs font-mono text-emerald-400';
+                    btn.disabled = false; btn.innerText = 'Run EA Backtest';
+                    fetchTesterResults();
+                } else if (['failed', 'timeout', 'cancelled'].includes(s.status)) {
+                    clearInterval(testerPollTimer); testerPollTimer = null;
+                    st.className = 'text-xs font-mono text-rose-400';
+                    btn.disabled = false; btn.innerText = 'Run EA Backtest';
+                }
+            } catch (e) { console.error(e); }
+        }, 3000);
+        btn.disabled = false; btn.innerText = 'Run EA Backtest';
+    } catch (e) {
+        st.innerText = String(e);
+        btn.disabled = false; btn.innerText = 'Run EA Backtest';
+    }
+}
+
+async function importSmokeReport() {
+    const st = document.getElementById('tester-status');
+    try {
+        const res = await fetch('/api/tester/import', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ path: '..\\tester\\fixtures\\OLC_smoke_gold.htm' }),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+            st.className = 'text-xs font-mono text-rose-400';
+            st.innerText = data.error || 'import failed';
+            return;
+        }
+        st.className = 'text-xs font-mono text-emerald-400';
+        st.innerText = `Imported sample · trades=${data.result.total_trades} PF=${data.result.profit_factor}`;
+        setOptMode('tester');
+        fetchTesterResults();
+    } catch (e) {
+        st.innerText = String(e);
+    }
+}
+
+setInterval(updateDashboard, 4000);
+updateDashboard();
+</script>
+</body>
+</html>
