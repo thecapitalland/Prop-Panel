@@ -268,11 +268,12 @@ class FlaskApiTests(unittest.TestCase):
         ids = {p["profile_id"] for p in r.get_json()["profiles"]}
         self.assertTrue({"moneta_2step_phase1_5_10", "sgb_plan_a_phase1", "sgb_plan_b_phase1", "custom"}.issubset(ids))
 
+    @patch("app.mt5")
     @patch("app._mt5_profit_at_close", return_value=-120.0)
     @patch("app.ensure_mt5", return_value=True)
     @patch("app.os.path.isfile", return_value=True)
     @patch("app.get_live_payload")
-    def test_risk_preview_is_advisory_and_returns_proposed_risk(self, mock_live, _isfile, _ensure, _profit):
+    def test_risk_preview_is_advisory_and_returns_proposed_risk(self, mock_live, _isfile, _ensure, _profit, mock_mt5):
         mock_live.return_value = {
             "ok": True,
             "account": {"balance": 50000.0, "equity": 50000.0, "profit": 0.0},
@@ -280,6 +281,22 @@ class FlaskApiTests(unittest.TestCase):
             "daily_drawdown": {"starting_balance": 50000.0},
             "open_positions": [],
         }
+        acc = MagicMock()
+        acc.login = 12345678
+        acc.name = "Test"
+        acc.server = "Broker-Demo"
+        acc.company = "Broker"
+        acc.currency = "USD"
+        acc.balance = 50000.0
+        acc.equity = 50000.0
+        acc.profit = 0.0
+        acc.margin = 0.0
+        acc.margin_free = 50000.0
+        acc.margin_level = 0.0
+        acc.leverage = 100
+        mock_mt5.account_info.return_value = acc
+        mock_mt5.positions_get.return_value = []
+
         r = self.client.post("/api/risk/preview", json={
             "symbol": "XAUUSD",
             "side": "BUY",
