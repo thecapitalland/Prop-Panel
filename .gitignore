@@ -12,6 +12,7 @@ venv/
 Thumbs.db
 
 # Generated / local runtime
+dashboard/terminals.json
 dashboard/tester_runs/
 dashboard/tester_results/
 dashboard/opt_job_status.json

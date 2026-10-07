@@ -162,6 +162,62 @@
             </div>
         </div>
 
+        <!-- Pre-Trade Risk Guard -->
+        <div class="glass rounded-2xl p-5 mb-5 border border-emerald-900/40" id="risk-guard-panel">
+            <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h3 class="font-semibold text-white">Pre-Trade Risk Guard</h3>
+                        <span id="risk-status" class="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-300">—</span>
+                    </div>
+                    <p class="text-[11px] text-gray-500 mt-1">Advisory only — previews provider-limit exposure; never sends or blocks an order.</p>
+                </div>
+                <label class="text-[11px] text-gray-400">
+                    Rule profile
+                    <select id="risk-profile" onchange="selectRiskProfile(this.value)" class="ml-2 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white">
+                        <option value="">Loading…</option>
+                    </select>
+                </label>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 font-mono text-sm">
+                <div class="rounded-xl bg-black/20 p-3">
+                    <div class="text-[10px] uppercase text-gray-500">Daily buffer</div>
+                    <div id="risk-daily-buffer" class="mt-1 font-bold text-white">—</div>
+                </div>
+                <div class="rounded-xl bg-black/20 p-3">
+                    <div class="text-[10px] uppercase text-gray-500">Max-DD buffer</div>
+                    <div id="risk-max-buffer" class="mt-1 font-bold text-white">—</div>
+                </div>
+                <div class="rounded-xl bg-black/20 p-3">
+                    <div class="text-[10px] uppercase text-gray-500">Known open SL risk</div>
+                    <div id="risk-open-sl" class="mt-1 font-bold text-amber-300">—</div>
+                </div>
+                <div class="rounded-xl bg-black/20 p-3">
+                    <div class="text-[10px] uppercase text-gray-500">Safe additional risk</div>
+                    <div id="risk-safe-additional" class="mt-1 font-bold text-emerald-400">—</div>
+                </div>
+            </div>
+
+            <div id="risk-warning" class="hidden mb-4 rounded-xl border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200"></div>
+
+            <div class="border-t border-gray-800 pt-4">
+                <div class="text-sm font-semibold text-white mb-2">Can I Take This Trade?</div>
+                <div class="grid grid-cols-2 md:grid-cols-6 gap-2">
+                    <input id="risk-symbol" placeholder="Symbol e.g. XAUUSD" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white"/>
+                    <select id="risk-side" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white">
+                        <option value="BUY">BUY</option>
+                        <option value="SELL">SELL</option>
+                    </select>
+                    <input id="risk-entry" type="number" step="any" placeholder="Entry" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white"/>
+                    <input id="risk-stop" type="number" step="any" placeholder="Stop loss" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white"/>
+                    <input id="risk-volume" type="number" step="0.01" placeholder="Volume" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white"/>
+                    <button id="risk-preview-btn" onclick="previewRisk()" class="rounded-lg bg-emerald-700 hover:bg-emerald-600 px-3 py-2 text-xs font-semibold text-white">Preview risk</button>
+                </div>
+                <div id="risk-preview-result" class="mt-3 text-xs text-gray-400"></div>
+            </div>
+        </div>
+
         <!-- Charts -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
             <div class="glass rounded-2xl p-4 lg:col-span-2">
@@ -654,6 +710,131 @@ function renderTrades(rows) {
         </tr>`).join('');
 }
 
+function riskStatusClass(status) {
+    if (status === 'BREACH' || status === 'UNBOUNDED_RISK') return 'bg-rose-950 text-rose-300 border border-rose-800/50';
+    if (status === 'HIGH_RISK') return 'bg-orange-950 text-orange-300 border border-orange-800/50';
+    if (status === 'WARNING') return 'bg-amber-950 text-amber-300 border border-amber-800/50';
+    if (status === 'SAFE') return 'bg-emerald-950 text-emerald-300 border border-emerald-800/50';
+    return 'bg-gray-800 text-gray-300';
+}
+
+function renderRiskGuard(r) {
+    const status = document.getElementById('risk-status');
+    const warn = document.getElementById('risk-warning');
+    if (!r || !r.available) {
+        status.innerText = 'UNAVAILABLE';
+        status.className = 'text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-300';
+        document.getElementById('risk-daily-buffer').innerText = '—';
+        document.getElementById('risk-max-buffer').innerText = '—';
+        document.getElementById('risk-open-sl').innerText = '—';
+        document.getElementById('risk-safe-additional').innerText = '—';
+        if (r && r.reason) {
+            warn.classList.remove('hidden');
+            warn.innerText = r.reason;
+        } else {
+            warn.classList.add('hidden');
+        }
+        return;
+    }
+
+    status.innerText = r.provider_status || '—';
+    status.className = 'text-[10px] px-2 py-0.5 rounded-full ' + riskStatusClass(r.provider_status);
+    document.getElementById('risk-daily-buffer').innerText =
+        r.daily && r.daily.current_buffer_usd != null ? money(r.daily.current_buffer_usd) : '—';
+    document.getElementById('risk-max-buffer').innerText =
+        r.overall && r.overall.current_buffer_usd != null ? money(r.overall.current_buffer_usd) : '—';
+    document.getElementById('risk-open-sl').innerText = money(r.open_sl_risk_usd || 0);
+    document.getElementById('risk-safe-additional').innerText = money(r.safe_additional_risk_usd || 0);
+
+    const warnings = [];
+    if (r.has_unbounded_risk) {
+        warnings.push(`${r.unbounded_positions} open position(s) have no usable SL. Downside is unbounded, so safe additional risk is not asserted.`);
+    }
+    if (r.day_reference_quality === 'reconstructed_balance' || r.day_reference_quality === 'bridge_estimated') {
+        warnings.push('Daily reset reference is estimated. Use the provider dashboard as the authoritative breach reference.');
+    }
+    if (warnings.length) {
+        warn.classList.remove('hidden');
+        warn.innerText = warnings.join(' ');
+    } else {
+        warn.classList.add('hidden');
+    }
+}
+
+async function fillRiskProfiles() {
+    try {
+        const res = await fetch('/api/profiles');
+        const data = await res.json();
+        const sel = document.getElementById('risk-profile');
+        if (!sel || !data.profiles) return;
+        sel.innerHTML = data.profiles.map(p =>
+            `<option value="${esc(p.profile_id)}" ${p.profile_id===data.active_profile_id?'selected':''}>${esc(p.name)}</option>`
+        ).join('');
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+async function selectRiskProfile(profileId) {
+    if (!profileId) return;
+    const res = await fetch('/api/profiles/select', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({profile_id: profileId}),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+        const warn = document.getElementById('risk-warning');
+        warn.classList.remove('hidden');
+        warn.innerText = data.error || 'Profile selection failed';
+        return;
+    }
+    await updateDashboard();
+}
+
+async function previewRisk() {
+    const btn = document.getElementById('risk-preview-btn');
+    const out = document.getElementById('risk-preview-result');
+    btn.disabled = true;
+    out.className = 'mt-3 text-xs text-gray-400';
+    out.innerText = 'Calculating with MT5 contract semantics…';
+    try {
+        const payload = {
+            symbol: document.getElementById('risk-symbol').value.trim(),
+            side: document.getElementById('risk-side').value,
+            entry: Number(document.getElementById('risk-entry').value),
+            stop_loss: Number(document.getElementById('risk-stop').value),
+            volume: Number(document.getElementById('risk-volume').value),
+        };
+        const res = await fetch('/api/risk/preview', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+            out.className = 'mt-3 text-xs text-rose-300';
+            out.innerText = data.error || 'Risk preview unavailable';
+            return;
+        }
+        const r = data.risk;
+        out.className = 'mt-3 text-xs text-gray-300';
+        const daily = r.daily && r.daily.projected_usage_pct != null ? r.daily.projected_usage_pct.toFixed(2) + '%' : '—';
+        const overall = r.overall && r.overall.projected_usage_pct != null ? r.overall.projected_usage_pct.toFixed(2) + '%' : '—';
+        out.innerHTML =
+            `<span class="font-semibold ${r.provider_status==='SAFE'?'text-emerald-400':'text-amber-300'}">${esc(r.provider_status)}</span>` +
+            ` · Proposed risk <span class="font-mono text-white">${money(data.trade.risk_usd)}</span>` +
+            ` · Daily projected <span class="font-mono">${daily}</span>` +
+            ` · Max projected <span class="font-mono">${overall}</span>` +
+            ` · Safe additional <span class="font-mono text-emerald-400">${money(r.safe_additional_risk_usd)}</span>`;
+    } catch (e) {
+        out.className = 'mt-3 text-xs text-rose-300';
+        out.innerText = String(e);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 async function updateDashboard() {
     if (liveInFlight) return; // never pile up polls while previous /api/data hangs
     liveInFlight = true;
@@ -763,6 +944,7 @@ async function updateDashboard() {
 
         updateEquityChart(data);
         updateSymbolChart(data.symbol_stats);
+        renderRiskGuard(data.risk_guard);
         renderPositions(data.open_positions);
         renderTrades(data.recent_trades);
     } catch (err) {
@@ -1000,6 +1182,7 @@ async function importSmokeReport() {
 }
 
 setInterval(updateDashboard, 4000);
+fillRiskProfiles();
 updateDashboard();
 </script>
 </body>

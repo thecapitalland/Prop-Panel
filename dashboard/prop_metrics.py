@@ -4,18 +4,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from provider_profiles import get_profile, normalize_profile
 
-DEFAULT_PROFILE = {
-    "name": "2-Step Program - $50,000 Challenge - Phase I",
-    "initial_balance": 50000.0,
-    "profit_target_usd": 2500.0,
-    "daily_loss_limit_usd": 2500.0,
-    "max_loss_limit_usd": 5000.0,
-    "min_trading_days": 3,
-    "min_day_profit_pct": 0.5,
-    "day_reset_hour_server": 0,
-    "consistency_cap_pct": 20.0,
-}
+
+DEFAULT_PROFILE = get_profile("moneta_2step_phase1_5_10")
 
 
 def _status(used_pct: float, warn_at: float = 60.0, breach_at: float = 100.0) -> str:
@@ -132,9 +124,11 @@ def build_prop_payload(
     profile: Optional[Dict[str, Any]] = None,
     now: Optional[datetime] = None,
     terminal: Optional[Dict[str, Any]] = None,
+    day_start_reference: Optional[float] = None,
+    day_reference_quality: str = "reconstructed_balance",
 ) -> Dict[str, Any]:
     """Assemble full dashboard JSON from account + deals (no MT5 calls)."""
-    profile = {**DEFAULT_PROFILE, **(profile or {})}
+    profile = normalize_profile(profile=profile)
     now = now or datetime.now()
     initial = float(profile["initial_balance"])
     pt = float(profile["profit_target_usd"])
@@ -168,8 +162,13 @@ def build_prop_payload(
     today_bucket = day_bucket(int(now.timestamp()), reset_hour)
     today_realized = float(daily_nets.get(today_bucket, 0.0))
 
-    # Reconstruct day-start balance ≈ balance - today's realized (approx)
-    day_start_balance = balance - today_realized
+    # Prefer an explicit provider reset reference when a live bridge captured it.
+    # Otherwise reconstruct from balance and today's realized P/L (approximate).
+    day_start_balance = (
+        float(day_start_reference)
+        if day_start_reference is not None and float(day_start_reference) > 0
+        else balance - today_realized
+    )
     current_daily_loss = max(0.0, day_start_balance - equity)
     daily_used_pct = (current_daily_loss / daily_lim * 100.0) if daily_lim > 0 else 0.0
 
@@ -271,6 +270,10 @@ def build_prop_payload(
         "error": None,
         "terminal": terminal or {},
         "program": {
+            "profile_id": profile.get("profile_id"),
+            "provider": profile.get("provider"),
+            "program": profile.get("program"),
+            "phase": profile.get("phase"),
             "name": profile["name"],
             "initial_balance": initial,
             "start_date": start_date,
@@ -279,6 +282,9 @@ def build_prop_payload(
             "max_loss_limit_usd": max_lim,
             "min_trading_days": min_days,
             "min_day_profit_pct": min_day_pct,
+            "rules_version": profile.get("rules_version"),
+            "source_url": profile.get("source_url"),
+            "verified_at": profile.get("verified_at"),
         },
         "account": account,
         "live": {
@@ -292,6 +298,11 @@ def build_prop_payload(
         },
         "daily_drawdown": {
             "starting_balance": round(day_start_balance, 2),
+            "reference_quality": (
+                day_reference_quality
+                if day_start_reference is not None and float(day_start_reference) > 0
+                else "reconstructed_balance"
+            ),
             "current_daily_loss": round(current_daily_loss, 2),
             "daily_drawdown_pct": round((current_daily_loss / day_start_balance * 100.0) if day_start_balance else 0.0, 2),
             "limit_usd": daily_lim,

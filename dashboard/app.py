@@ -23,6 +23,9 @@ from flask import Flask, jsonify, render_template, request
 import MetaTrader5 as mt5
 
 from prop_metrics import DEFAULT_PROFILE, build_prop_payload
+from provider_profiles import get_profile, list_profiles, normalize_profile
+from risk_engine import evaluate_risk
+from mt5_risk_adapter import aggregate_open_sl_exposure, proposed_trade_exposure
 from bridge_reader import (
     account_from_bridge,
     deals_from_bridge,
@@ -32,6 +35,7 @@ from bridge_reader import (
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TERMINALS_FILE = os.path.join(HERE, "terminals.json")
+TERMINALS_EXAMPLE_FILE = os.path.join(HERE, "terminals.example.json")
 RESULTS_FILE = os.path.join(HERE, "optimization_results.json")
 
 app = Flask(__name__, template_folder=os.path.join(HERE, "templates"))
@@ -50,14 +54,38 @@ _opt_proc: Optional[subprocess.Popen] = None
 
 
 def load_config() -> Dict[str, Any]:
-    if not os.path.exists(TERMINALS_FILE):
-        return {
-            "active_id": "moneta_funded",
-            "prop_profile": dict(DEFAULT_PROFILE),
-            "terminals": [],
-        }
-    with open(TERMINALS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """Load local runtime config, falling back to the committed sanitized example."""
+    source = TERMINALS_FILE if os.path.exists(TERMINALS_FILE) else TERMINALS_EXAMPLE_FILE
+    if os.path.exists(source):
+        with open(source, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {
+        "active_id": None,
+        "profile_id": "moneta_2step_phase1_5_10",
+        "personal_risk_policy": {
+            "warning_threshold_pct": 70,
+            "high_risk_threshold_pct": 85,
+            "personal_daily_stop_pct": 2.0,
+        },
+        "bridge": {
+            "prefer": True,
+            "filename": "moneta_bridge.json",
+            "max_age_sec": 45,
+            "mt5_fallback": True,
+        },
+        "terminals": [],
+    }
+
+
+def active_profile(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve registry profile, optional account-size overrides, or legacy flat config."""
+    overrides = cfg.get("prop_profile")
+    if overrides is None:
+        overrides = cfg.get("profile_overrides")
+    return normalize_profile(
+        profile=overrides,
+        profile_id=cfg.get("profile_id"),
+    )
 
 
 def save_config(cfg: Dict[str, Any]) -> None:
@@ -261,8 +289,100 @@ def fetch_positions() -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
     return open_positions, None
 
 
+def _mt5_profit_at_close(
+    symbol: str,
+    side: str,
+    volume: float,
+    price_open: float,
+    price_close: float,
+) -> float:
+    """Use MT5's own contract semantics; never guess pip/tick value math."""
+    order_type = mt5.ORDER_TYPE_BUY if str(side).upper() == "BUY" else mt5.ORDER_TYPE_SELL
+    value = mt5.order_calc_profit(
+        order_type,
+        str(symbol),
+        float(volume),
+        float(price_open),
+        float(price_close),
+    )
+    if value is None:
+        raise RuntimeError(f"MT5 order_calc_profit unavailable for {symbol}: {mt5.last_error()}")
+    return float(value)
+
+
+def _risk_guard_payload(
+    *,
+    payload: Dict[str, Any],
+    profile: Dict[str, Any],
+    positions: List[Dict[str, Any]],
+    calculator=None,
+    personal_policy: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build advisory live risk summary. Fail closed when exposure cannot be calculated."""
+    if calculator is None and positions:
+        return {
+            "available": False,
+            "advisory_only": True,
+            "profile_id": profile.get("profile_id"),
+            "provider": profile.get("provider"),
+            "reason": "Open-position SL exposure needs MT5 contract calculation; use preview or MT5 API fallback.",
+        }
+    try:
+        exposure = (
+            aggregate_open_sl_exposure(positions, calculator)
+            if positions
+            else {"known_risk_usd": 0.0, "unbounded_positions": 0, "positions": []}
+        )
+        risk = evaluate_risk(
+            account=payload.get("account") or {},
+            profile=profile,
+            open_sl_risk_usd=float(exposure["known_risk_usd"]),
+            proposed_trade_risk_usd=0.0,
+            unbounded_positions=int(exposure["unbounded_positions"]),
+            personal_policy=personal_policy,
+            day_start_reference=float((payload.get("daily_drawdown") or {}).get("starting_balance") or 0.0),
+        )
+        return {
+            "available": True,
+            **risk,
+            "day_reference_quality": (payload.get("daily_drawdown") or {}).get("reference_quality"),
+            "existing_exposure": exposure,
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "advisory_only": True,
+            "profile_id": profile.get("profile_id"),
+            "provider": profile.get("provider"),
+            "reason": str(exc),
+        }
+
+
+def _validate_preview_body(body: Dict[str, Any]) -> Optional[str]:
+    symbol = str(body.get("symbol") or "").strip()
+    side = str(body.get("side") or "").upper()
+    if not symbol:
+        return "symbol is required"
+    if side not in ("BUY", "SELL"):
+        return "side must be BUY or SELL"
+    try:
+        entry = float(body.get("entry"))
+        stop = float(body.get("stop_loss"))
+        volume = float(body.get("volume"))
+    except (TypeError, ValueError):
+        return "entry, stop_loss and volume must be numeric"
+    if entry <= 0 or stop <= 0 or volume <= 0:
+        return "entry, stop_loss and volume must be positive"
+    if side == "BUY" and stop >= entry:
+        return "BUY stop_loss must be below entry"
+    if side == "SELL" and stop <= entry:
+        return "SELL stop_loss must be above entry"
+    return None
+
+
 def get_live_payload() -> Dict[str, Any]:
     cfg = load_config()
+    profile = active_profile(cfg)
     active_id = cfg.get("active_id")
     term = get_terminal_by_id(cfg, active_id) if active_id else None
     if term is None:
@@ -312,13 +432,24 @@ def get_live_payload() -> Dict[str, Any]:
                 "path": (term or {}).get("path") or raw.get("_bridge_path"),
                 "active": True,
             }
+            prop_snapshot = raw.get("prop") or {}
+            bridge_day_ref = prop_snapshot.get("day_reference")
+            bridge_day_ref_captured = bool(prop_snapshot.get("day_reference_captured", False))
             payload = build_prop_payload(
                 account=account,
                 deal_list=deals,
                 open_positions=positions,
-                profile=cfg.get("prop_profile") or DEFAULT_PROFILE,
+                profile=profile,
                 now=datetime.now(),
                 terminal=term_meta,
+                day_start_reference=(
+                    float(bridge_day_ref)
+                    if bridge_day_ref is not None and float(bridge_day_ref) > 0
+                    else None
+                ),
+                day_reference_quality=(
+                    "bridge_captured_reset" if bridge_day_ref_captured else "bridge_estimated"
+                ),
             )
             payload["ok"] = True
             payload["terminals"] = list_terminals(cfg)
@@ -338,7 +469,16 @@ def get_live_payload() -> Dict[str, Any]:
             }
             payload["disclaimer"] = (
                 "Live data from MonetaDashboardBridge EA (All History file). "
-                "Official Moneta portal remains the source of truth for challenge pass/fail."
+                "Provider rules/portal remain the source of truth for pass/fail."
+            )
+            # Bridge-first polling stays non-invasive: do not attach MT5 just to calculate exposure.
+            # If no positions are open, risk is still fully calculable; otherwise preview can attach on demand.
+            payload["risk_guard"] = _risk_guard_payload(
+                payload=payload,
+                profile=profile,
+                positions=positions,
+                calculator=None,
+                personal_policy=cfg.get("personal_risk_policy"),
             )
             _live_cache["key"] = cache_key
             _live_cache["payload"] = payload
@@ -444,7 +584,7 @@ def get_live_payload() -> Dict[str, Any]:
         account=account,
         deal_list=deals or [],
         open_positions=positions or [],
-        profile=cfg.get("prop_profile") or DEFAULT_PROFILE,
+        profile=profile,
         now=datetime.now(),
         terminal={
             "id": term.get("id"),
@@ -461,7 +601,14 @@ def get_live_payload() -> Dict[str, Any]:
     payload["disclaimer"] = (
         "Calculations are approximate from MT5 Python API history. "
         "For stabler reads attach MonetaDashboardBridge.mq5. "
-        "Official Moneta portal remains the source of truth for challenge pass/fail."
+        "Provider rules/portal remain the source of truth for pass/fail."
+    )
+    payload["risk_guard"] = _risk_guard_payload(
+        payload=payload,
+        profile=profile,
+        positions=positions or [],
+        calculator=_mt5_profit_at_close,
+        personal_policy=cfg.get("personal_risk_policy"),
     )
     return payload
 
@@ -534,6 +681,110 @@ def api_data():
     data = get_live_payload()
     # Always 200 so UI can show soft errors without fetch throw
     return jsonify(data)
+
+
+@app.route("/api/profiles")
+def api_profiles():
+    cfg = load_config()
+    return jsonify({
+        "active_profile_id": active_profile(cfg).get("profile_id"),
+        "profiles": list_profiles(),
+    })
+
+
+@app.route("/api/profiles/select", methods=["POST"])
+def api_profiles_select():
+    body = request.get_json(silent=True) or {}
+    profile_id = str(body.get("profile_id") or "").strip()
+    if not profile_id:
+        return jsonify({"ok": False, "error": "profile_id required"}), 400
+    try:
+        get_profile(profile_id)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    cfg = load_config()
+    cfg["profile_id"] = profile_id
+    cfg.pop("prop_profile", None)
+    save_config(cfg)
+    _live_cache["key"] = None
+    _live_cache["payload"] = None
+    return jsonify({"ok": True, "profile": get_profile(profile_id)})
+
+
+@app.route("/api/risk/preview", methods=["POST"])
+def api_risk_preview():
+    """Advisory-only preview. Never sends, modifies, or blocks an order."""
+    body = request.get_json(silent=True) or {}
+    validation_error = _validate_preview_body(body)
+    if validation_error:
+        return jsonify({"ok": False, "error": validation_error}), 400
+
+    live = get_live_payload()
+    if not live.get("ok"):
+        return jsonify({"ok": False, "error": live.get("error") or "live account unavailable"}), 503
+
+    cfg = load_config()
+    profile = active_profile(cfg)
+    active_id = cfg.get("active_id")
+    term = get_terminal_by_id(cfg, active_id) if active_id else None
+    if term is None:
+        return jsonify({"ok": False, "error": "no active MT5 terminal configured"}), 503
+    path = str(term.get("path") or "")
+    if not path or not os.path.isfile(path):
+        return jsonify({"ok": False, "error": f"terminal executable not found: {path}"}), 503
+    if not ensure_mt5(path):
+        return jsonify({"ok": False, "error": _state.get("last_error") or "MT5 calculation unavailable"}), 503
+
+    try:
+        # Risk preview is a deliberate user action, so refresh account/positions from
+        # the already-running terminal instead of relying on the bridge poll cache.
+        acc = mt5.account_info()
+        if acc is None:
+            raise RuntimeError(f"MT5 account_info unavailable: {mt5.last_error()}")
+        fresh_account = {
+            "login": int(acc.login),
+            "name": str(acc.name),
+            "server": str(acc.server),
+            "company": str(acc.company),
+            "currency": str(acc.currency),
+            "balance": float(acc.balance),
+            "equity": float(acc.equity),
+            "profit": float(acc.profit),
+            "margin": float(acc.margin),
+            "margin_free": float(acc.margin_free),
+            "margin_level": float(acc.margin_level) if float(acc.margin) > 0 else 0.0,
+            "leverage": int(acc.leverage),
+        }
+        fresh_positions, pos_err = fetch_positions()
+        if pos_err:
+            raise RuntimeError(pos_err)
+
+        exposure = aggregate_open_sl_exposure(fresh_positions or [], _mt5_profit_at_close)
+        trade = proposed_trade_exposure(body, _mt5_profit_at_close)
+        risk = evaluate_risk(
+            account=fresh_account,
+            profile=profile,
+            open_sl_risk_usd=float(exposure["known_risk_usd"]),
+            proposed_trade_risk_usd=float(trade["risk_usd"]),
+            unbounded_positions=int(exposure["unbounded_positions"]),
+            personal_policy=cfg.get("personal_risk_policy"),
+            day_start_reference=float((live.get("daily_drawdown") or {}).get("starting_balance") or 0.0),
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
+
+    return jsonify({
+        "ok": True,
+        "advisory_only": True,
+        "trade": trade,
+        "existing_exposure": exposure,
+        "risk": {
+            **risk,
+            "day_reference_quality": (live.get("daily_drawdown") or {}).get("reference_quality"),
+        },
+    })
 
 
 @app.route("/api/optimization/results")
