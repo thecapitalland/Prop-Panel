@@ -139,11 +139,11 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
 def _materialize(profile: Dict[str, Any]) -> Dict[str, Any]:
     p = deepcopy(profile)
     initial = float(p.get("initial_balance") or 0.0)
-    if "profit_target_pct" in p and "profit_target_usd" not in p:
+    if "profit_target_pct" in p:
         p["profit_target_usd"] = round(initial * float(p["profit_target_pct"]) / 100.0, 2)
-    if "daily_loss_limit_pct" in p and "daily_loss_limit_usd" not in p:
+    if "daily_loss_limit_pct" in p:
         p["daily_loss_limit_usd"] = round(initial * float(p["daily_loss_limit_pct"]) / 100.0, 2)
-    if "max_loss_limit_pct" in p and "max_loss_limit_usd" not in p:
+    if "max_loss_limit_pct" in p:
         p["max_loss_limit_usd"] = round(initial * float(p["max_loss_limit_pct"]) / 100.0, 2)
     return p
 
