@@ -85,7 +85,12 @@ def evaluate_risk(
     statuses = []
     for view in (daily, overall):
         if view["available"]:
-            statuses.append(_bucket(view["projected_usage_pct"], warning, high))
+            raw_used_pct = (
+                float(view["projected_loss_usd"]) / float(view["limit_usd"]) * 100.0
+                if float(view["limit_usd"]) > 0
+                else None
+            )
+            statuses.append(_bucket(raw_used_pct, warning, high))
     rank = {"UNAVAILABLE": 0, "SAFE": 1, "WARNING": 2, "HIGH_RISK": 3, "BREACH": 4}
     provider_status = max(statuses, key=lambda s: rank[s]) if statuses else "UNAVAILABLE"
 
