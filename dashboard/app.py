@@ -428,6 +428,9 @@ def get_live_payload() -> Dict[str, Any]:
                 "path": (term or {}).get("path") or raw.get("_bridge_path"),
                 "active": True,
             }
+            prop_snapshot = raw.get("prop") or {}
+            bridge_day_ref = prop_snapshot.get("day_reference")
+            bridge_day_ref_exact = bool(prop_snapshot.get("day_reference_exact", False))
             payload = build_prop_payload(
                 account=account,
                 deal_list=deals,
@@ -435,6 +438,14 @@ def get_live_payload() -> Dict[str, Any]:
                 profile=profile,
                 now=datetime.now(),
                 terminal=term_meta,
+                day_start_reference=(
+                    float(bridge_day_ref)
+                    if bridge_day_ref is not None and float(bridge_day_ref) > 0
+                    else None
+                ),
+                day_reference_quality=(
+                    "bridge_exact" if bridge_day_ref_exact else "bridge_estimated"
+                ),
             )
             payload["ok"] = True
             payload["terminals"] = list_terminals(cfg)
