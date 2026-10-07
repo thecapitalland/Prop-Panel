@@ -1,6 +1,9 @@
 {
   "active_id": "mt5_default",
   "profile_id": "moneta_2step_phase1_5_10",
+  "profile_overrides": {
+    "initial_balance": 50000.0
+  },
   "personal_risk_policy": {
     "warning_threshold_pct": 70,
     "high_risk_threshold_pct": 85,
