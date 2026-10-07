@@ -78,9 +78,12 @@ def load_config() -> Dict[str, Any]:
 
 
 def active_profile(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Resolve registry profile or legacy flat prop_profile config."""
+    """Resolve registry profile, optional account-size overrides, or legacy flat config."""
+    overrides = cfg.get("prop_profile")
+    if overrides is None:
+        overrides = cfg.get("profile_overrides")
     return normalize_profile(
-        profile=cfg.get("prop_profile"),
+        profile=overrides,
         profile_id=cfg.get("profile_id"),
     )
 
@@ -342,6 +345,7 @@ def _risk_guard_payload(
         return {
             "available": True,
             **risk,
+            "day_reference_quality": (payload.get("daily_drawdown") or {}).get("reference_quality"),
             "existing_exposure": exposure,
         }
     except Exception as exc:
@@ -732,10 +736,33 @@ def api_risk_preview():
         return jsonify({"ok": False, "error": _state.get("last_error") or "MT5 calculation unavailable"}), 503
 
     try:
-        exposure = aggregate_open_sl_exposure(live.get("open_positions") or [], _mt5_profit_at_close)
+        # Risk preview is a deliberate user action, so refresh account/positions from
+        # the already-running terminal instead of relying on the bridge poll cache.
+        acc = mt5.account_info()
+        if acc is None:
+            raise RuntimeError(f"MT5 account_info unavailable: {mt5.last_error()}")
+        fresh_account = {
+            "login": int(acc.login),
+            "name": str(acc.name),
+            "server": str(acc.server),
+            "company": str(acc.company),
+            "currency": str(acc.currency),
+            "balance": float(acc.balance),
+            "equity": float(acc.equity),
+            "profit": float(acc.profit),
+            "margin": float(acc.margin),
+            "margin_free": float(acc.margin_free),
+            "margin_level": float(acc.margin_level) if float(acc.margin) > 0 else 0.0,
+            "leverage": int(acc.leverage),
+        }
+        fresh_positions, pos_err = fetch_positions()
+        if pos_err:
+            raise RuntimeError(pos_err)
+
+        exposure = aggregate_open_sl_exposure(fresh_positions or [], _mt5_profit_at_close)
         trade = proposed_trade_exposure(body, _mt5_profit_at_close)
         risk = evaluate_risk(
-            account=live.get("account") or {},
+            account=fresh_account,
             profile=profile,
             open_sl_risk_usd=float(exposure["known_risk_usd"]),
             proposed_trade_risk_usd=float(trade["risk_usd"]),
@@ -753,7 +780,10 @@ def api_risk_preview():
         "advisory_only": True,
         "trade": trade,
         "existing_exposure": exposure,
-        "risk": risk,
+        "risk": {
+            **risk,
+            "day_reference_quality": (live.get("daily_drawdown") or {}).get("reference_quality"),
+        },
     })
 
 
