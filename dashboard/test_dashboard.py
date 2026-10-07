@@ -216,6 +216,63 @@ class FlaskApiTests(unittest.TestCase):
         self.assertFalse(body["ok"])
         self.assertIn("not running", body["error"].lower())
 
+    @patch("app.get_live_payload")
+    def test_api_data_includes_risk_guard(self, mock_live):
+        mock_live.return_value = {
+            "ok": True,
+            "account": {"balance": 50000.0, "equity": 50000.0, "profit": 0.0},
+            "program": {
+                "profile_id": "moneta_2step_phase1_5_10",
+                "provider": "moneta_funded",
+                "initial_balance": 50000.0,
+            },
+            "daily_drawdown": {"starting_balance": 50000.0},
+            "open_positions": [],
+            "risk_guard": {"available": True, "provider_status": "SAFE"},
+        }
+        body = self.client.get("/api/data").get_json()
+        self.assertIn("risk_guard", body)
+        self.assertTrue(body["risk_guard"]["available"])
+
+    def test_profiles_endpoint_lists_moneta_sgb_and_custom(self):
+        r = self.client.get("/api/profiles")
+        self.assertEqual(r.status_code, 200)
+        ids = {p["profile_id"] for p in r.get_json()["profiles"]}
+        self.assertTrue({"moneta_2step_phase1_5_10", "sgb_plan_a_phase1", "sgb_plan_b_phase1", "custom"}.issubset(ids))
+
+    @patch("app._mt5_profit_at_close", return_value=-120.0)
+    @patch("app.ensure_mt5", return_value=True)
+    @patch("app.os.path.isfile", return_value=True)
+    @patch("app.get_live_payload")
+    def test_risk_preview_is_advisory_and_returns_proposed_risk(self, mock_live, _isfile, _ensure, _profit):
+        mock_live.return_value = {
+            "ok": True,
+            "account": {"balance": 50000.0, "equity": 50000.0, "profit": 0.0},
+            "program": {"profile_id": "legacy_custom"},
+            "daily_drawdown": {"starting_balance": 50000.0},
+            "open_positions": [],
+        }
+        r = self.client.post("/api/risk/preview", json={
+            "symbol": "XAUUSD",
+            "side": "BUY",
+            "entry": 2671.40,
+            "stop_loss": 2664.20,
+            "volume": 0.50,
+        })
+        self.assertEqual(r.status_code, 200, r.get_json())
+        body = r.get_json()
+        self.assertTrue(body["advisory_only"])
+        self.assertEqual(body["trade"]["risk_usd"], 120.0)
+        self.assertIn("risk", body)
+        self.assertNotIn("executed", body)
+
+    def test_risk_preview_rejects_bad_trade_input(self):
+        r = self.client.post("/api/risk/preview", json={
+            "symbol": "XAUUSD", "side": "BUY", "entry": 100, "stop_loss": 101, "volume": 1
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(r.get_json()["ok"])
+
     def test_bridge_reader_fresh_file(self):
         from bridge_reader import load_bridge, account_from_bridge, deals_from_bridge
         import time
