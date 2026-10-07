@@ -37,6 +37,15 @@ class ProviderProfileTests(unittest.TestCase):
         self.assertEqual(a["daily_loss_limit_pct"], 5.0)
         self.assertEqual(a["max_loss_limit_pct"], 12.0)
 
+    def test_profile_override_recalculates_usd_limits_for_account_size(self):
+        p = self._module().normalize_profile(
+            profile={"initial_balance": 100000.0},
+            profile_id="moneta_2step_phase1_5_10",
+        )
+        self.assertEqual(p["profit_target_usd"], 5000.0)
+        self.assertEqual(p["daily_loss_limit_usd"], 5000.0)
+        self.assertEqual(p["max_loss_limit_usd"], 10000.0)
+
     def test_custom_profile_exists(self):
         p = self._module().get_profile("custom")
         self.assertEqual(p["provider"], "custom")
