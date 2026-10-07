@@ -5,7 +5,7 @@
 //|  Does NOT trade. Attach to any chart on the logged-in account.    |
 //+------------------------------------------------------------------+
 #property copyright "Moneta Dashboard Bridge"
-#property version   "1.00"
+#property version   "1.10"
 #property strict
 #property description "Exports All History + live account/quotes for Prop Dashboard"
 
@@ -40,6 +40,9 @@ string   g_lvlOverall = "ok";
 bool     g_breach     = false;
 datetime g_lastCloseSeen = 0;
 datetime g_curDayB    = 0;
+double   g_dayReference = 0.0;
+bool     g_dayReferenceCaptured = false;
+datetime g_dayReferenceBoundary = 0;
 bool     g_started    = false;
 int      g_writeCount = 0;
 
@@ -50,6 +53,11 @@ int OnInit()
    g_peak          = AccountInfoDouble(ACCOUNT_EQUITY);
    g_lastCloseSeen = TimeGMT();
    g_curDayB       = DayBoundaryUTC();
+   g_dayReferenceBoundary = g_curDayB;
+   // Mid-day attach cannot reconstruct equity-at-reset exactly. Start with the
+   // balance-only reconstruction and mark it estimated until we observe a reset.
+   g_dayReference = AccountInfoDouble(ACCOUNT_BALANCE) - TodayRealized();
+   g_dayReferenceCaptured = false;
    Print("MonetaDashboardBridge init → Common\\Files\\", InpFileName,
          " | AllHistory=", (InpExportAllHistory ? "yes" : "no"),
          " | symbols=", InpSymbols);
@@ -328,8 +336,25 @@ void ExportNow()
    string ccy      = AccountInfoString(ACCOUNT_CURRENCY);
    double todayReal = TodayRealized();
 
+   datetime dayBoundary = DayBoundaryUTC();
+   if(g_dayReferenceBoundary == 0)
+      g_dayReferenceBoundary = dayBoundary;
+   if(dayBoundary != g_dayReferenceBoundary)
+   {
+      // Timer fires within InpTimerSeconds of the configured reset. Capture the
+      // provider reference at the first observation of the new trading day.
+      g_dayReference = MathMax(balance, equity);
+      g_dayReferenceCaptured = true;
+      g_dayReferenceBoundary = dayBoundary;
+   }
+   if(g_dayReference <= 0.0)
+   {
+      g_dayReference = balance - todayReal;
+      g_dayReferenceCaptured = false;
+   }
+
    double dailyLimit = InpDailyLossUsd;
-   double sodBalance = balance - todayReal;
+   double sodBalance = g_dayReference;
    double dailyFloor = sodBalance - dailyLimit;
    double dailyUsed  = MathMax(0.0, sodBalance - equity);
    double dailyPct   = (dailyLimit > 0) ? MathMin(100.0, dailyUsed / dailyLimit * 100.0) : 0.0;
@@ -394,6 +419,9 @@ void ExportNow()
    FileWriteString(h, "\"max_loss_usd\":" + DoubleToString(InpMaxLossUsd, 2) + ",");
    FileWriteString(h, "\"trailing\":" + (InpTrailingMax ? "true" : "false") + ",");
    FileWriteString(h, "\"day_reset_utc\":" + IntegerToString(InpDayResetUTC) + ",");
+   FileWriteString(h, "\"day_reference\":" + DoubleToString(g_dayReference, 2) + ",");
+   FileWriteString(h, "\"day_reference_captured\":" + (g_dayReferenceCaptured ? "true" : "false") + ",");
+   FileWriteString(h, "\"day_reference_boundary_utc\":" + IntegerToString((long)g_dayReferenceBoundary) + ",");
    FileWriteString(h, "\"today_realized\":" + DoubleToString(todayReal, 2) + ",");
    FileWriteString(h, "\"daily_floor\":" + DoubleToString(dailyFloor, 2) + ",");
    FileWriteString(h, "\"daily_room\":" + DoubleToString(dailyRoom, 2) + ",");
