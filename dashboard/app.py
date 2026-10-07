@@ -430,7 +430,7 @@ def get_live_payload() -> Dict[str, Any]:
             }
             prop_snapshot = raw.get("prop") or {}
             bridge_day_ref = prop_snapshot.get("day_reference")
-            bridge_day_ref_exact = bool(prop_snapshot.get("day_reference_exact", False))
+            bridge_day_ref_captured = bool(prop_snapshot.get("day_reference_captured", False))
             payload = build_prop_payload(
                 account=account,
                 deal_list=deals,
@@ -444,7 +444,7 @@ def get_live_payload() -> Dict[str, Any]:
                     else None
                 ),
                 day_reference_quality=(
-                    "bridge_exact" if bridge_day_ref_exact else "bridge_estimated"
+                    "bridge_captured_reset" if bridge_day_ref_captured else "bridge_estimated"
                 ),
             )
             payload["ok"] = True
