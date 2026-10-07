@@ -746,9 +746,16 @@ function renderRiskGuard(r) {
     document.getElementById('risk-open-sl').innerText = money(r.open_sl_risk_usd || 0);
     document.getElementById('risk-safe-additional').innerText = money(r.safe_additional_risk_usd || 0);
 
+    const warnings = [];
     if (r.has_unbounded_risk) {
+        warnings.push(`${r.unbounded_positions} open position(s) have no usable SL. Downside is unbounded, so safe additional risk is not asserted.`);
+    }
+    if (r.day_reference_quality === 'reconstructed_balance' || r.day_reference_quality === 'bridge_estimated') {
+        warnings.push('Daily reset reference is estimated. Use the provider dashboard as the authoritative breach reference.');
+    }
+    if (warnings.length) {
         warn.classList.remove('hidden');
-        warn.innerText = `${r.unbounded_positions} open position(s) have no usable SL. Downside is unbounded, so safe additional risk is not asserted.`;
+        warn.innerText = warnings.join(' ');
     } else {
         warn.classList.add('hidden');
     }
