@@ -45,6 +45,11 @@ class RiskEngineTests(unittest.TestCase):
         self.assertEqual(r["projected_worst_case_equity"], 49500.0)
         self.assertEqual(r["daily"]["projected_loss_usd"], 500.0)
 
+    def test_safe_additional_risk_stops_at_high_risk_threshold(self):
+        r = self._evaluate()
+        self.assertEqual(r["safe_additional_risk_usd"], 2125.0)
+        self.assertEqual(r["remaining_to_breach_usd"], 2500.0)
+
     def test_personal_stop_can_trigger_before_provider_limit(self):
         r = self._evaluate(
             account={"balance": 50000.0, "equity": 48950.0, "profit": -1050.0},
