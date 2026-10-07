@@ -31,6 +31,26 @@ def _deal(pos, entry, typ, symbol, t, profit=0.0, volume=0.1, price=1.1):
 
 
 class PropMetricsTests(unittest.TestCase):
+    def test_build_payload_uses_explicit_daily_reference_when_available(self):
+        account = {
+            "balance": 50000.0,
+            "equity": 49000.0,
+            "profit": -1000.0,
+            "currency": "USD",
+        }
+        payload = build_prop_payload(
+            account=account,
+            deal_list=[],
+            open_positions=[],
+            profile=None,
+            now=datetime(2026, 8, 4, 13, 0, 0),
+            day_start_reference=51000.0,
+            day_reference_quality="bridge_exact",
+        )
+        self.assertEqual(payload["daily_drawdown"]["starting_balance"], 51000.0)
+        self.assertEqual(payload["daily_drawdown"]["current_daily_loss"], 2000.0)
+        self.assertEqual(payload["daily_drawdown"]["reference_quality"], "bridge_exact")
+
     def test_countdown_format(self):
         now = datetime(2026, 8, 4, 12, 0, 0)
         c = next_reset_countdown(now, reset_hour=0)
