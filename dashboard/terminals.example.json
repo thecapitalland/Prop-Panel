@@ -1,0 +1,25 @@
+{
+  "active_id": "mt5_default",
+  "profile_id": "moneta_2step_phase1_5_10",
+  "personal_risk_policy": {
+    "warning_threshold_pct": 70,
+    "high_risk_threshold_pct": 85,
+    "personal_daily_stop_pct": 2.0,
+    "max_consecutive_losses": 3,
+    "max_trades_per_day": 6
+  },
+  "bridge": {
+    "prefer": true,
+    "filename": "moneta_bridge.json",
+    "max_age_sec": 45,
+    "mt5_fallback": true
+  },
+  "terminals": [
+    {
+      "id": "mt5_default",
+      "label": "MetaTrader 5",
+      "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
+      "enabled": true
+    }
+  ]
+}
