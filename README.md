@@ -1,6 +1,6 @@
 # Prop-Panel
 
-**Local-first MT5 prop-trading risk monitor, execution toolkit, and Quant Strategy Lab.**
+**Local-first MT5 prop-trading risk monitor, multi-provider rule engine, execution toolkit, and Quant Strategy Lab.**
 
 [![CI](https://github.com/thecapitalland/Prop-Panel/actions/workflows/tests.yml/badge.svg)](https://github.com/thecapitalland/Prop-Panel/actions/workflows/tests.yml)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
@@ -30,6 +30,8 @@ Core design goals:
 | Area | Capability |
 |---|---|
 | Live Monitor | Balance, equity, floating P&L, drawdown usage, profit-target progress, trading-day metrics, positions and trade statistics |
+| Pre-Trade Risk Guard | Advisory "Can I Take This Trade?" preview using provider limits, current equity, open-SL exposure, and proposed-trade risk |
+| Provider Profiles | Versioned Moneta Funded, SGB and Custom rule profiles without provider-specific branches in the core risk math |
 | MT5 Bridge | Read-only MQL5 exporter for account/history/position data into a local JSON file |
 | Quant Strategy Lab | Fast Python simulation and parameter sweeps across Risk / TP / SL / Gap combinations |
 | Real Validation | MetaTrader 5 Strategy Tester orchestration using the actual MQL5 EA |
@@ -37,6 +39,41 @@ Core design goals:
 | Execution EA | Basket/order-level MQL5 EA with prop-oriented guardrails |
 | Multi-terminal | Config-driven switching between local MT5 terminal installations |
 
+## Pre-Trade Risk Guard
+
+The Live Monitor includes an advisory-only **Pre-Trade Risk Guard** for a question prop traders routinely need answered before entering a position:
+
+> **Can I take this trade without putting the account dangerously close to a rule breach?**
+
+It combines current equity, the active provider profile, known remaining downside to stop losses on open positions, and the proposed trade's MT5-calculated loss at stop.
+
+The preview reports:
+
+- Current daily/max drawdown buffer
+- Known open-position SL exposure
+- Proposed trade risk in account currency
+- Projected worst-case equity
+- Projected daily and maximum drawdown usage
+- Safe additional risk budget
+- `SAFE`, `WARNING`, `HIGH_RISK`, `BREACH`, or `UNBOUNDED_RISK`
+
+Positions without a usable stop loss are **never counted as zero risk**. They are surfaced as unbounded downside.
+
+The Risk Guard does **not** send, modify, block, or cancel trades.
+
+## Multi-provider rule profiles
+
+Provider rules are normalized in `dashboard/provider_profiles.py`; core risk math does not branch on provider names.
+
+Initial profiles include:
+
+- Moneta Funded 2-Step Phase I — 5% / 10%
+- Moneta Funded 2-Step Phase I — 4% / 8% add-on variant
+- SGB Plan A Phase I
+- SGB Plan B Phase I
+- Custom
+
+Each profile exposes rule-version/source metadata. Provider websites and account dashboards remain authoritative because prop rules can change.
 ## Quant Strategy Lab
 
 The Strategy Lab deliberately separates two different forms of testing:
@@ -110,7 +147,13 @@ python -m pip install -r requirements.txt
 
 ### 2. Configure local MT5 terminals
 
-Edit `dashboard/terminals.json` and point each `path` to the local `terminal64.exe` installation you want Prop-Panel to use.
+Runtime terminal configuration is intentionally local-only:
+
+```powershell
+Copy-Item dashboard\terminals.example.json dashboard\terminals.json
+```
+
+Edit `dashboard/terminals.json` and point each `path` to the local `terminal64.exe` installation you want Prop-Panel to use. The local file is gitignored so workstation paths and account-specific configuration are not published.
 
 Do not commit credentials, account exports, Telegram tokens, or generated runtime metadata.
 
@@ -141,6 +184,7 @@ python tools\sync_history.py --update
 - The Flask server binds to `127.0.0.1` by default.
 - The dashboard does not automatically start, stop, or kill a live MetaTrader terminal.
 - The bridge EA is read-only with respect to trading operations.
+- The Pre-Trade Risk Guard is advisory-only and uses MT5 `order_calc_profit` semantics for proposed-trade loss; it never places or blocks an order.
 - Strategy Lab Mode A is approximate simulation, not EA-equivalent execution.
 - Strategy Lab Mode B uses the actual MT5 Strategy Tester.
 - `OrderLevelControl_Prop_EA.mq5` **can place/manage trades** and includes logic that can close managed positions when configured loss guards are breached.
@@ -169,6 +213,7 @@ GitHub Actions runs the same core test suite on `windows-latest` so the MT5 Pyth
 ## Roadmap
 
 - Walk-forward validation and stronger out-of-sample analysis
+- More provider profiles and provider-rule regression fixtures
 - More explicit rule profiles for different challenge/funded programs
 - Improved parity checks between fast simulation and real Strategy Tester results
 - Better export/import of top parameter sets between Mode A and Mode B
