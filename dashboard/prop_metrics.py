@@ -124,6 +124,8 @@ def build_prop_payload(
     profile: Optional[Dict[str, Any]] = None,
     now: Optional[datetime] = None,
     terminal: Optional[Dict[str, Any]] = None,
+    day_start_reference: Optional[float] = None,
+    day_reference_quality: str = "reconstructed_balance",
 ) -> Dict[str, Any]:
     """Assemble full dashboard JSON from account + deals (no MT5 calls)."""
     profile = normalize_profile(profile=profile)
@@ -160,8 +162,13 @@ def build_prop_payload(
     today_bucket = day_bucket(int(now.timestamp()), reset_hour)
     today_realized = float(daily_nets.get(today_bucket, 0.0))
 
-    # Reconstruct day-start balance ≈ balance - today's realized (approx)
-    day_start_balance = balance - today_realized
+    # Prefer an explicit provider reset reference when a live bridge captured it.
+    # Otherwise reconstruct from balance and today's realized P/L (approximate).
+    day_start_balance = (
+        float(day_start_reference)
+        if day_start_reference is not None and float(day_start_reference) > 0
+        else balance - today_realized
+    )
     current_daily_loss = max(0.0, day_start_balance - equity)
     daily_used_pct = (current_daily_loss / daily_lim * 100.0) if daily_lim > 0 else 0.0
 
@@ -291,6 +298,11 @@ def build_prop_payload(
         },
         "daily_drawdown": {
             "starting_balance": round(day_start_balance, 2),
+            "reference_quality": (
+                day_reference_quality
+                if day_start_reference is not None and float(day_start_reference) > 0
+                else "reconstructed_balance"
+            ),
             "current_daily_loss": round(current_daily_loss, 2),
             "daily_drawdown_pct": round((current_daily_loss / day_start_balance * 100.0) if day_start_balance else 0.0, 2),
             "limit_usd": daily_lim,
