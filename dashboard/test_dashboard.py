@@ -216,6 +216,14 @@ class FlaskApiTests(unittest.TestCase):
         self.assertFalse(body["ok"])
         self.assertIn("not running", body["error"].lower())
 
+    def test_index_contains_pretrade_risk_guard(self):
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        text = r.get_data(as_text=True)
+        self.assertIn("Pre-Trade Risk Guard", text)
+        self.assertIn("Can I Take This Trade?", text)
+        self.assertIn("Advisory only", text)
+
     @patch("app.get_live_payload")
     def test_api_data_includes_risk_guard(self, mock_live):
         mock_live.return_value = {
