@@ -103,9 +103,15 @@ def evaluate_risk(
         for v in (daily, overall)
         if v["available"] and v["projected_buffer_usd"] is not None
     ]
-    safe_additional = min(remaining) if remaining else 0.0
-    if has_unbounded:
-        safe_additional = 0.0
+    remaining_to_breach = min(remaining) if remaining else 0.0
+
+    # "Safe" means staying below the configured WARNING threshold, not merely
+    # staying one cent above the provider breach floor.
+    safe_rooms = []
+    for view in (daily, overall):
+        if view["available"]:
+            safe_floor = float(view["limit_usd"]) * warning / 100.0
+            safe_rooms.append(max(0.0, safe_floor - float(view["projected_loss_usd"])))
 
     personal_status = "NOT_CONFIGURED"
     personal_limit = None
@@ -113,6 +119,11 @@ def evaluate_risk(
     if personal_pct is not None and initial > 0:
         personal_limit = initial * float(personal_pct) / 100.0
         personal_status = "STOP" if projected_daily_loss >= personal_limit else "OK"
+        safe_rooms.append(max(0.0, personal_limit - projected_daily_loss))
+
+    safe_additional = min(safe_rooms) if safe_rooms else 0.0
+    if has_unbounded:
+        safe_additional = 0.0
 
     return {
         "advisory_only": True,
@@ -130,6 +141,7 @@ def evaluate_risk(
         "has_unbounded_risk": has_unbounded,
         "unbounded_positions": int(unbounded_positions),
         "safe_additional_risk_usd": round(max(0.0, safe_additional), 2),
+        "remaining_to_breach_usd": round(max(0.0, remaining_to_breach), 2),
         "personal_status": personal_status,
         "personal_daily_stop_usd": round(personal_limit, 2) if personal_limit is not None else None,
         "thresholds": {"warning_pct": warning, "high_risk_pct": high, "breach_pct": 100.0},
