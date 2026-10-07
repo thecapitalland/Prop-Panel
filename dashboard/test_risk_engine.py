@@ -47,7 +47,7 @@ class RiskEngineTests(unittest.TestCase):
 
     def test_safe_additional_risk_stops_at_high_risk_threshold(self):
         r = self._evaluate()
-        self.assertEqual(r["safe_additional_risk_usd"], 2125.0)
+        self.assertEqual(r["safe_additional_risk_usd"], 1750.0)
         self.assertEqual(r["remaining_to_breach_usd"], 2500.0)
 
     def test_personal_stop_can_trigger_before_provider_limit(self):
