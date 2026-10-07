@@ -4,18 +4,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from provider_profiles import get_profile, normalize_profile
 
-DEFAULT_PROFILE = {
-    "name": "2-Step Program - $50,000 Challenge - Phase I",
-    "initial_balance": 50000.0,
-    "profit_target_usd": 2500.0,
-    "daily_loss_limit_usd": 2500.0,
-    "max_loss_limit_usd": 5000.0,
-    "min_trading_days": 3,
-    "min_day_profit_pct": 0.5,
-    "day_reset_hour_server": 0,
-    "consistency_cap_pct": 20.0,
-}
+
+DEFAULT_PROFILE = get_profile("moneta_2step_phase1_5_10")
 
 
 def _status(used_pct: float, warn_at: float = 60.0, breach_at: float = 100.0) -> str:
@@ -134,7 +126,7 @@ def build_prop_payload(
     terminal: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble full dashboard JSON from account + deals (no MT5 calls)."""
-    profile = {**DEFAULT_PROFILE, **(profile or {})}
+    profile = normalize_profile(profile=profile)
     now = now or datetime.now()
     initial = float(profile["initial_balance"])
     pt = float(profile["profit_target_usd"])
@@ -271,6 +263,10 @@ def build_prop_payload(
         "error": None,
         "terminal": terminal or {},
         "program": {
+            "profile_id": profile.get("profile_id"),
+            "provider": profile.get("provider"),
+            "program": profile.get("program"),
+            "phase": profile.get("phase"),
             "name": profile["name"],
             "initial_balance": initial,
             "start_date": start_date,
@@ -279,6 +275,9 @@ def build_prop_payload(
             "max_loss_limit_usd": max_lim,
             "min_trading_days": min_days,
             "min_day_profit_pct": min_day_pct,
+            "rules_version": profile.get("rules_version"),
+            "source_url": profile.get("source_url"),
+            "verified_at": profile.get("verified_at"),
         },
         "account": account,
         "live": {
