@@ -918,10 +918,19 @@ async function updateDashboard() {
         document.getElementById('lo-eq').innerText = money(L.lowest_equity);
 
         const d = data.daily_drawdown;
-        document.getElementById('daily-loss-val').innerText = `${money(d.current_daily_loss)} / ${money(d.limit_usd)}`;
-        document.getElementById('daily-pct').innerText = `${d.used_of_limit_pct.toFixed(2)}% of limit`;
-        document.getElementById('daily-bar').style.width = `${Math.min(100, d.used_of_limit_pct)}%`;
-        setStatus(document.getElementById('daily-status'), d.status);
+        if (d.available === false) {
+            document.getElementById('daily-loss-val').innerText = `N/A / ${money(d.limit_usd)}`;
+            document.getElementById('daily-pct').innerText = 'Broker server UTC offset required';
+            document.getElementById('daily-bar').style.width = '0%';
+            document.getElementById('daily-status').innerText = 'UNAVAILABLE';
+            document.getElementById('daily-status').className =
+                'text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400';
+        } else {
+            document.getElementById('daily-loss-val').innerText = `${money(d.current_daily_loss)} / ${money(d.limit_usd)}`;
+            document.getElementById('daily-pct').innerText = `${d.used_of_limit_pct.toFixed(2)}% of limit`;
+            document.getElementById('daily-bar').style.width = `${Math.min(100, d.used_of_limit_pct)}%`;
+            setStatus(document.getElementById('daily-status'), d.status);
+        }
 
         const o = data.overall_drawdown;
         document.getElementById('overall-loss-val').innerText = `${money(o.current_overall_loss)} / ${money(o.limit_usd)}`;
