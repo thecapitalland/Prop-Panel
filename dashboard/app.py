@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, render_template, request
@@ -23,9 +23,9 @@ from flask import Flask, jsonify, render_template, request
 import MetaTrader5 as mt5
 
 from prop_metrics import DEFAULT_PROFILE, build_prop_payload
-from provider_profiles import get_profile, list_profiles, normalize_profile
+from provider_profiles import get_profile, list_profiles, normalize_profile, normalize_symbol
 from risk_engine import evaluate_risk
-from mt5_risk_adapter import aggregate_open_sl_exposure, proposed_trade_exposure
+from mt5_risk_adapter import aggregate_open_sl_exposure, proposed_trade_exposure, max_volume_for_risk
 from bridge_reader import (
     account_from_bridge,
     deals_from_bridge,
@@ -328,19 +328,42 @@ def _risk_guard_payload(
             "reason": "Open-position SL exposure needs MT5 contract calculation; use preview or MT5 API fallback.",
         }
     try:
+        risk_profile = copy.deepcopy(profile)
+        if not bool((payload.get("daily_drawdown") or {}).get("available", True)):
+            risk_profile["daily_loss_limit_usd"] = 0.0
         exposure = (
-            aggregate_open_sl_exposure(positions, calculator)
+            aggregate_open_sl_exposure(
+                positions,
+                calculator,
+                symbol_normalizer=lambda s: normalize_symbol(s, profile),
+            )
             if positions
-            else {"known_risk_usd": 0.0, "unbounded_positions": 0, "positions": []}
+            else {
+                "known_risk_usd": 0.0,
+                "entry_risk_usd": 0.0,
+                "current_loss_usd": 0.0,
+                "risk_by_symbol": {},
+                "current_loss_by_symbol": {},
+                "unbounded_positions": 0,
+                "positions": [],
+            }
         )
         risk = evaluate_risk(
             account=payload.get("account") or {},
-            profile=profile,
+            profile=risk_profile,
             open_sl_risk_usd=float(exposure["known_risk_usd"]),
             proposed_trade_risk_usd=0.0,
             unbounded_positions=int(exposure["unbounded_positions"]),
             personal_policy=personal_policy,
             day_start_reference=float((payload.get("daily_drawdown") or {}).get("starting_balance") or 0.0),
+            open_concurrent_risk_usd=float(exposure.get("entry_risk_usd") or 0.0),
+            open_risk_by_symbol=exposure.get("risk_by_symbol") or {},
+            current_concurrent_loss_usd=max(
+                0.0,
+                float((payload.get("account") or {}).get("balance") or 0.0)
+                - float((payload.get("account") or {}).get("equity") or 0.0),
+            ),
+            current_loss_by_symbol=exposure.get("current_loss_by_symbol") or {},
         )
         return {
             "available": True,
@@ -356,6 +379,65 @@ def _risk_guard_payload(
             "provider": profile.get("provider"),
             "reason": str(exc),
         }
+
+
+def _attach_utc_deal_times(
+    deals: List[Dict[str, Any]],
+    server_utc_offset_seconds: Optional[int],
+) -> List[Dict[str, Any]]:
+    """Keep MT5 server timestamps and attach normalized UTC copies for rule math."""
+    if server_utc_offset_seconds is None:
+        return [dict(d) for d in deals]
+    offset = int(server_utc_offset_seconds)
+    out: List[Dict[str, Any]] = []
+    for deal in deals:
+        item = dict(deal)
+        if item.get("time") is not None:
+            item["time_utc"] = int(item["time"]) - offset
+        if item.get("time_msc") is not None:
+            item["time_msc_utc"] = int(item["time_msc"]) - offset * 1000
+        out.append(item)
+    return out
+
+
+def _server_utc_offset_from_bridge(raw: Dict[str, Any]) -> Optional[int]:
+    """Return broker-server offset from the bridge's same-snapshot clocks."""
+    try:
+        server_time = int(raw.get("server_time"))
+        utc_time = int(raw.get("ts"))
+    except (TypeError, ValueError):
+        return None
+    offset = server_time - utc_time
+    # Reject implausible clock deltas rather than poisoning provider-day bucketing.
+    if abs(offset) > 15 * 3600:
+        return None
+    return offset
+
+
+def _bridge_day_reference_for_profile(
+    prop_snapshot: Dict[str, Any],
+    profile: Dict[str, Any],
+) -> Tuple[Optional[float], str]:
+    """Use bridge reset reference only when its semantics match the active profile."""
+    rule = profile.get("daily_loss") or {}
+    if rule.get("reference") != "max_balance_equity_at_reset":
+        return None, "profile_reconstructed"
+
+    expected_reset = rule.get("reset_hour_utc")
+    bridge_reset = prop_snapshot.get("day_reset_utc")
+    if expected_reset is None or bridge_reset is None:
+        return None, "profile_reconstructed"
+    try:
+        if int(expected_reset) != int(bridge_reset):
+            return None, "profile_reconstructed"
+        value = float(prop_snapshot.get("day_reference") or 0.0)
+    except (TypeError, ValueError):
+        return None, "profile_reconstructed"
+    if value <= 0:
+        return None, "profile_reconstructed"
+
+    captured = bool(prop_snapshot.get("day_reference_captured", False))
+    return value, ("bridge_captured_reset" if captured else "bridge_estimated")
 
 
 def _validate_preview_body(body: Dict[str, Any]) -> Optional[str]:
@@ -424,7 +506,7 @@ def get_live_payload() -> Dict[str, Any]:
                 return payload
 
             account = account_from_bridge(raw)
-            deals = deals_from_bridge(raw)
+            raw_deals = deals_from_bridge(raw)
             positions = positions_from_bridge(raw)
             term_meta = {
                 "id": (term or {}).get("id") or "ea_bridge",
@@ -433,23 +515,22 @@ def get_live_payload() -> Dict[str, Any]:
                 "active": True,
             }
             prop_snapshot = raw.get("prop") or {}
-            bridge_day_ref = prop_snapshot.get("day_reference")
-            bridge_day_ref_captured = bool(prop_snapshot.get("day_reference_captured", False))
+            bridge_day_ref, bridge_day_quality = _bridge_day_reference_for_profile(
+                prop_snapshot, profile
+            )
+            server_utc_offset_seconds = _server_utc_offset_from_bridge(raw)
+            deals = _attach_utc_deal_times(raw_deals, server_utc_offset_seconds)
             payload = build_prop_payload(
                 account=account,
                 deal_list=deals,
                 open_positions=positions,
                 profile=profile,
-                now=datetime.now(),
+                now=datetime.now(timezone.utc),
                 terminal=term_meta,
-                day_start_reference=(
-                    float(bridge_day_ref)
-                    if bridge_day_ref is not None and float(bridge_day_ref) > 0
-                    else None
-                ),
-                day_reference_quality=(
-                    "bridge_captured_reset" if bridge_day_ref_captured else "bridge_estimated"
-                ),
+                day_start_reference=bridge_day_ref,
+                day_reference_quality=bridge_day_quality,
+                server_utc_offset_seconds=server_utc_offset_seconds,
+                deal_times_are_utc=(server_utc_offset_seconds is not None),
             )
             payload["ok"] = True
             payload["terminals"] = list_terminals(cfg)
@@ -580,18 +661,25 @@ def get_live_payload() -> Dict[str, Any]:
                 "terminal": {"id": term.get("id"), "label": term.get("label"), "path": path},
             }
 
+    configured_server_offset = term.get("server_utc_offset_seconds")
+    normalized_deals = _attach_utc_deal_times(
+        deals or [],
+        configured_server_offset,
+    )
     payload = build_prop_payload(
         account=account,
-        deal_list=deals or [],
+        deal_list=normalized_deals,
         open_positions=positions or [],
         profile=profile,
-        now=datetime.now(),
+        now=datetime.now(timezone.utc),
         terminal={
             "id": term.get("id"),
             "label": term.get("label"),
             "path": path,
             "active": True,
         },
+        server_utc_offset_seconds=configured_server_offset,
+        deal_times_are_utc=(configured_server_offset is not None),
     )
     payload["ok"] = True
     payload["terminals"] = list_terminals(cfg)
@@ -759,17 +847,103 @@ def api_risk_preview():
         if pos_err:
             raise RuntimeError(pos_err)
 
-        exposure = aggregate_open_sl_exposure(fresh_positions or [], _mt5_profit_at_close)
+        symbol_normalizer = lambda s: normalize_symbol(s, profile)
+        exposure = aggregate_open_sl_exposure(
+            fresh_positions or [],
+            _mt5_profit_at_close,
+            symbol_normalizer=symbol_normalizer,
+        )
         trade = proposed_trade_exposure(body, _mt5_profit_at_close)
+        symbol_group = symbol_normalizer(trade["symbol"])
+        policy = cfg.get("personal_risk_policy") or {}
+        day_reference = float(
+            (live.get("daily_drawdown") or {}).get("starting_balance") or 0.0
+        )
+
+        preview_profile = copy.deepcopy(profile)
+        if not bool((live.get("daily_drawdown") or {}).get("available", True)):
+            preview_profile["daily_loss_limit_usd"] = 0.0
+
+        base_risk = evaluate_risk(
+            account=fresh_account,
+            profile=preview_profile,
+            open_sl_risk_usd=float(exposure["known_risk_usd"]),
+            proposed_trade_risk_usd=0.0,
+            unbounded_positions=int(exposure["unbounded_positions"]),
+            personal_policy=policy,
+            day_start_reference=day_reference,
+            open_concurrent_risk_usd=float(exposure.get("entry_risk_usd") or 0.0),
+            open_risk_by_symbol=exposure.get("risk_by_symbol") or {},
+            current_concurrent_loss_usd=max(
+                0.0,
+                float(fresh_account.get("balance") or 0.0)
+                - float(fresh_account.get("equity") or 0.0),
+            ),
+            current_loss_by_symbol=exposure.get("current_loss_by_symbol") or {},
+            proposed_symbol=symbol_group,
+            proposed_symbol_risk_usd=0.0,
+        )
         risk = evaluate_risk(
             account=fresh_account,
-            profile=profile,
+            profile=preview_profile,
             open_sl_risk_usd=float(exposure["known_risk_usd"]),
             proposed_trade_risk_usd=float(trade["risk_usd"]),
             unbounded_positions=int(exposure["unbounded_positions"]),
-            personal_policy=cfg.get("personal_risk_policy"),
-            day_start_reference=float((live.get("daily_drawdown") or {}).get("starting_balance") or 0.0),
+            personal_policy=policy,
+            day_start_reference=day_reference,
+            open_concurrent_risk_usd=float(exposure.get("entry_risk_usd") or 0.0),
+            open_risk_by_symbol=exposure.get("risk_by_symbol") or {},
+            current_concurrent_loss_usd=max(
+                0.0,
+                float(fresh_account.get("balance") or 0.0)
+                - float(fresh_account.get("equity") or 0.0),
+            ),
+            current_loss_by_symbol=exposure.get("current_loss_by_symbol") or {},
+            proposed_symbol=symbol_group,
+            proposed_symbol_risk_usd=float(trade["risk_usd"]),
         )
+
+        symbol_info = mt5.symbol_info(str(trade["symbol"]))
+        execution_buffer_pct = max(
+            0.0, min(50.0, float(policy.get("execution_buffer_pct") or 0.0))
+        )
+        sizing = {
+            "available": False,
+            "max_safe_volume": None,
+            "binding_constraint": base_risk.get("binding_constraint"),
+            "execution_buffer_pct": execution_buffer_pct,
+        }
+        if symbol_info is not None:
+            risk_per_lot = abs(
+                _mt5_profit_at_close(
+                    trade["symbol"],
+                    trade["side"],
+                    1.0,
+                    float(trade["entry"]),
+                    float(trade["stop_loss"]),
+                )
+            )
+            raw_budget = float(base_risk.get("safe_additional_risk_usd") or 0.0)
+            buffered_budget = raw_budget * (1.0 - execution_buffer_pct / 100.0)
+            max_safe_volume = max_volume_for_risk(
+                risk_budget_usd=buffered_budget,
+                risk_per_lot_usd=risk_per_lot,
+                volume_min=float(symbol_info.volume_min),
+                volume_max=float(symbol_info.volume_max),
+                volume_step=float(symbol_info.volume_step),
+            )
+            sizing = {
+                "available": True,
+                "risk_budget_usd": round(buffered_budget, 2),
+                "raw_risk_budget_usd": round(raw_budget, 2),
+                "risk_per_lot_usd": round(risk_per_lot, 2),
+                "max_safe_volume": max_safe_volume,
+                "volume_min": float(symbol_info.volume_min),
+                "volume_max": float(symbol_info.volume_max),
+                "volume_step": float(symbol_info.volume_step),
+                "binding_constraint": base_risk.get("binding_constraint"),
+                "execution_buffer_pct": execution_buffer_pct,
+            }
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
@@ -780,6 +954,7 @@ def api_risk_preview():
         "advisory_only": True,
         "trade": trade,
         "existing_exposure": exposure,
+        "sizing": sizing,
         "risk": {
             **risk,
             "day_reference_quality": (live.get("daily_drawdown") or {}).get("reference_quality"),

@@ -54,12 +54,15 @@ The preview reports:
 - Proposed trade risk in account currency
 - Projected worst-case equity
 - Projected daily and maximum drawdown usage
+- Provider concurrent-risk constraints where configured
+- Per-symbol risk concentration where configured
 - Safe additional risk budget
-- `SAFE`, `WARNING`, `HIGH_RISK`, `BREACH`, or `UNBOUNDED_RISK`
+- Maximum broker-valid safe volume (floored to MT5 `volume_step`)
+- Binding constraint explaining what actually limits the trade
 
-Positions without a usable stop loss are **never counted as zero risk**. They are surfaced as unbounded downside.
+Provider compliance and exposure certainty are separate. A position without a usable stop loss is **never counted as zero risk**: current rule status can still be evaluated from live loss, while future exposure is marked `UNBOUNDED_RISK` / `CANNOT_ASSERT_SAFE`.
 
-The Risk Guard does **not** send, modify, block, or cancel trades.
+The Risk Guard does **not** send, modify, block, or cancel trades. Existing provider breaches force the safe-size budget to zero. If the provider-day time basis cannot be established safely, affected Daily DD / trading-day metrics are reported as unavailable instead of silently using the workstation timezone.
 
 ## Multi-provider rule profiles
 
@@ -72,6 +75,12 @@ Initial profiles include:
 - SGB Plan A Phase I
 - SGB Plan B Phase I
 - Custom
+
+Provider-aware time boundaries are used for challenge-day metrics. Moneta 2-Step uses the documented 22:00 UTC reset. SGB uses **00:00 broker-server time**; it is not assumed to be UTC. The EA bridge derives the broker/UTC offset from the same snapshot clocks. MT5 Python fallback requires `server_utc_offset_seconds` in the local terminal config when provider-day calculations depend on broker/server time.
+
+For Moneta, Profit Target progress uses `balance - initial balance`, which excludes floating/open-position P/L and does not depend on how much local MT5 history is currently loaded. Minimum Profitable Days use closed trading-day P/L and count only days meeting the configured 0.5% threshold.
+
+For SGB, the public profile models the published aggregate simultaneous-risk rule (3% for supported account sizes up to 50K; 2% for 100K/200K). The additional 2% per-symbol concurrent-risk constraint is stored with `source_type: user_supplied_account_rule` because it came from a real-account rule supplied by a user and is not represented as a publicly verified SGB webpage claim.
 
 Each profile exposes rule-version/source metadata. Provider websites and account dashboards remain authoritative because prop rules can change.
 ## Quant Strategy Lab

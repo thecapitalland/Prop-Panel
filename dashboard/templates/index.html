@@ -124,7 +124,7 @@
         <!-- Today + trading days + stats -->
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
             <div class="glass rounded-2xl p-4">
-                <div class="text-[11px] text-gray-500 uppercase">Today 0.5% Trading Day</div>
+                <div id="today-day-label" class="text-[11px] text-gray-500 uppercase">Today 0.5% Trading Day</div>
                 <div id="today-status" class="text-sm font-semibold mt-1 text-rose-400">NOT MET</div>
                 <div id="today-val" class="text-lg font-bold mt-1">$0 / $250</div>
                 <div class="bar mt-2"><i id="today-bar" class="bg-cyan-500" style="width:0%"></i></div>
@@ -215,6 +215,16 @@
                     <button id="risk-preview-btn" onclick="previewRisk()" class="rounded-lg bg-emerald-700 hover:bg-emerald-600 px-3 py-2 text-xs font-semibold text-white">Preview risk</button>
                 </div>
                 <div id="risk-preview-result" class="mt-3 text-xs text-gray-400"></div>
+                <div class="grid grid-cols-2 gap-2 mt-3 text-xs font-mono">
+                    <div class="rounded-lg bg-black/20 p-2">
+                        <div class="text-[10px] uppercase text-gray-500">Max safe volume</div>
+                        <div id="risk-max-safe-volume" class="text-emerald-400 font-bold mt-1">—</div>
+                    </div>
+                    <div class="rounded-lg bg-black/20 p-2">
+                        <div class="text-[10px] uppercase text-gray-500">Binding constraint</div>
+                        <div id="risk-binding-rule" class="text-amber-300 font-bold mt-1">—</div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -748,7 +758,7 @@ function renderRiskGuard(r) {
 
     const warnings = [];
     if (r.has_unbounded_risk) {
-        warnings.push(`${r.unbounded_positions} open position(s) have no usable SL. Downside is unbounded, so safe additional risk is not asserted.`);
+        warnings.push(`${r.unbounded_positions} open position(s) have no usable SL. Provider breach status is evaluated separately, but future exposure cannot be asserted safe.`);
     }
     if (r.day_reference_quality === 'reconstructed_balance' || r.day_reference_quality === 'bridge_estimated') {
         warnings.push('Daily reset reference is estimated. Use the provider dashboard as the authoritative breach reference.');
@@ -815,18 +825,34 @@ async function previewRisk() {
         if (!res.ok || !data.ok) {
             out.className = 'mt-3 text-xs text-rose-300';
             out.innerText = data.error || 'Risk preview unavailable';
+            document.getElementById('risk-max-safe-volume').innerText = '—';
+            document.getElementById('risk-binding-rule').innerText = '—';
             return;
         }
         const r = data.risk;
+        const sizing = data.sizing || {};
         out.className = 'mt-3 text-xs text-gray-300';
         const daily = r.daily && r.daily.projected_usage_pct != null ? r.daily.projected_usage_pct.toFixed(2) + '%' : '—';
         const overall = r.overall && r.overall.projected_usage_pct != null ? r.overall.projected_usage_pct.toFixed(2) + '%' : '—';
+        const agg = r.constraints && r.constraints.aggregate && r.constraints.aggregate.available
+            ? r.constraints.aggregate.projected_usage_pct.toFixed(2) + '%' : '—';
+        const sym = r.constraints && r.constraints.per_symbol && r.constraints.per_symbol.available
+            ? r.constraints.per_symbol.projected_usage_pct.toFixed(2) + '%' : '—';
         out.innerHTML =
             `<span class="font-semibold ${r.provider_status==='SAFE'?'text-emerald-400':'text-amber-300'}">${esc(r.provider_status)}</span>` +
+            ` · Exposure <span class="font-mono">${esc(r.exposure_status || '—')}</span>` +
             ` · Proposed risk <span class="font-mono text-white">${money(data.trade.risk_usd)}</span>` +
-            ` · Daily projected <span class="font-mono">${daily}</span>` +
-            ` · Max projected <span class="font-mono">${overall}</span>` +
-            ` · Safe additional <span class="font-mono text-emerald-400">${money(r.safe_additional_risk_usd)}</span>`;
+            ` · Daily <span class="font-mono">${daily}</span>` +
+            ` · Max <span class="font-mono">${overall}</span>` +
+            ` · Aggregate <span class="font-mono">${agg}</span>` +
+            ` · Symbol <span class="font-mono">${sym}</span>`;
+        document.getElementById('risk-max-safe-volume').innerText =
+            sizing.available && sizing.max_safe_volume != null
+                ? Number(sizing.max_safe_volume).toFixed(2) + ' lot'
+                : 'Unavailable';
+        const binding = sizing.binding_constraint || {};
+        document.getElementById('risk-binding-rule').innerText =
+            (binding.code || '—') + (sizing.execution_buffer_pct ? ` · buffer ${sizing.execution_buffer_pct}%` : '');
     } catch (e) {
         out.className = 'mt-3 text-xs text-rose-300';
         out.innerText = String(e);
@@ -892,10 +918,19 @@ async function updateDashboard() {
         document.getElementById('lo-eq').innerText = money(L.lowest_equity);
 
         const d = data.daily_drawdown;
-        document.getElementById('daily-loss-val').innerText = `${money(d.current_daily_loss)} / ${money(d.limit_usd)}`;
-        document.getElementById('daily-pct').innerText = `${d.used_of_limit_pct.toFixed(2)}% of limit`;
-        document.getElementById('daily-bar').style.width = `${Math.min(100, d.used_of_limit_pct)}%`;
-        setStatus(document.getElementById('daily-status'), d.status);
+        if (d.available === false) {
+            document.getElementById('daily-loss-val').innerText = `N/A / ${money(d.limit_usd)}`;
+            document.getElementById('daily-pct').innerText = 'Provider time reference unavailable';
+            document.getElementById('daily-bar').style.width = '0%';
+            document.getElementById('daily-status').innerText = 'UNAVAILABLE';
+            document.getElementById('daily-status').className =
+                'text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400';
+        } else {
+            document.getElementById('daily-loss-val').innerText = `${money(d.current_daily_loss)} / ${money(d.limit_usd)}`;
+            document.getElementById('daily-pct').innerText = `${d.used_of_limit_pct.toFixed(2)}% of limit`;
+            document.getElementById('daily-bar').style.width = `${Math.min(100, d.used_of_limit_pct)}%`;
+            setStatus(document.getElementById('daily-status'), d.status);
+        }
 
         const o = data.overall_drawdown;
         document.getElementById('overall-loss-val').innerText = `${money(o.current_overall_loss)} / ${money(o.limit_usd)}`;
@@ -910,22 +945,50 @@ async function updateDashboard() {
         setStatus(document.getElementById('pt-status'), pt.status);
 
         const td = data.today_trading_day;
-        document.getElementById('today-val').innerText = `${money(td.realized_pnl)} / ${money(td.target_usd)}`;
-        document.getElementById('today-bar').style.width = `${Math.min(100, Math.max(0, td.progress_pct))}%`;
-        document.getElementById('today-status').innerText = td.status.replace('_',' ');
-        document.getElementById('today-status').className = 'text-sm font-semibold mt-1 ' + (td.hit ? 'text-emerald-400' : 'text-rose-400');
+        const todayLabel = document.getElementById('today-day-label');
+        if (td.applicable === false) {
+            todayLabel.innerText = 'Trading Day Rule';
+            document.getElementById('today-val').innerText = 'Not required';
+            document.getElementById('today-bar').style.width = '0%';
+            document.getElementById('today-status').innerText = 'N/A';
+            document.getElementById('today-status').className = 'text-sm font-semibold mt-1 text-gray-400';
+        } else if (td.available === false) {
+            todayLabel.innerText = 'Today 0.5% Trading Day';
+            document.getElementById('today-val').innerText = 'Provider time unavailable';
+            document.getElementById('today-bar').style.width = '0%';
+            document.getElementById('today-status').innerText = 'UNAVAILABLE';
+            document.getElementById('today-status').className = 'text-sm font-semibold mt-1 text-amber-300';
+        } else {
+            todayLabel.innerText = 'Today 0.5% Trading Day';
+            document.getElementById('today-val').innerText = `${money(td.realized_pnl)} / ${money(td.target_usd)}`;
+            document.getElementById('today-bar').style.width = `${Math.min(100, Math.max(0, td.progress_pct))}%`;
+            document.getElementById('today-status').innerText = td.status.replaceAll('_',' ');
+            document.getElementById('today-status').className = 'text-sm font-semibold mt-1 ' + (td.hit ? 'text-emerald-400' : 'text-rose-400');
+        }
 
         const days = data.trading_days;
         const counted = days.counted_days ?? days.profitable_days ?? days.qualifying_days ?? 0;
-        document.getElementById('days-val').innerText = `${counted} / ${days.required}`;
-        setStatus(document.getElementById('days-status'), days.target_met ? 'MET' : 'IN_PROGRESS');
-        document.getElementById('days-note').innerText = days.target_met
-            ? `Target Met ✓ · ≥0.5% days: ${days.days_hitting_05pct ?? 0}`
-            : `Profitable days toward min ${days.required} · ≥0.5% days: ${days.days_hitting_05pct ?? 0}`;
+        if (days.applicable === false) {
+            document.getElementById('days-val').innerText = 'N/A';
+            document.getElementById('days-status').innerText = 'N/A';
+            document.getElementById('days-status').className = 'text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400';
+            document.getElementById('days-note').innerText = 'No minimum profitable-day rule in the active provider profile.';
+        } else if (days.available === false) {
+            document.getElementById('days-val').innerText = '—';
+            document.getElementById('days-status').innerText = 'UNAVAILABLE';
+            document.getElementById('days-status').className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300';
+            document.getElementById('days-note').innerText = 'Provider trading-day boundary is unavailable; configure broker server time or use the EA bridge.';
+        } else {
+            document.getElementById('days-val').innerText = `${counted} / ${days.required}`;
+            setStatus(document.getElementById('days-status'), days.target_met ? 'MET' : 'IN_PROGRESS');
+            document.getElementById('days-note').innerText = days.target_met
+                ? `Target Met ✓ · qualifying ≥0.5% days: ${days.days_hitting_05pct ?? 0}`
+                : `Qualifying ≥0.5% days: ${counted} / ${days.required}`;
+        }
         document.getElementById('consistency-note').innerText = `Consistency ${days.consistency_pct}% (cap ${days.consistency_cap_pct}%) · best day ${money(days.best_day_profit)}`;
         const histEl = document.getElementById('history-note');
         if (days.history_start && days.history_end) {
-            histEl.innerText = `MT5 history used: ${days.history_start} → ${days.history_end}. If Moneta portal shows more days, scroll/load Account History in that terminal.`;
+            histEl.innerText = `MT5 history used: ${days.history_start} → ${days.history_end}. If the provider portal shows more history, load/scroll Account History in that terminal.`;
         } else {
             histEl.innerText = '';
         }

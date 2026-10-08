@@ -8,6 +8,7 @@
     "warning_threshold_pct": 70,
     "high_risk_threshold_pct": 85,
     "personal_daily_stop_pct": 2.0,
+    "execution_buffer_pct": 5.0,
     "max_consecutive_losses": 3,
     "max_trades_per_day": 6
   },
@@ -22,7 +23,8 @@
       "id": "mt5_default",
       "label": "MetaTrader 5",
       "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
-      "enabled": true
+      "enabled": true,
+      "server_utc_offset_seconds": null
     }
   ]
 }

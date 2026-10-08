@@ -40,6 +40,56 @@ class RiskAdapterTests(unittest.TestCase):
         self.assertEqual(r["known_risk_usd"], 300.0)
         self.assertEqual(r["unbounded_positions"], 0)
 
+    def test_aggregate_groups_entry_to_stop_risk_by_normalized_symbol(self):
+        positions = [
+            {"symbol": "XAUUSD.X", "type": "BUY", "volume": 1.0, "price_open": 100.0, "price_current": 99.0, "sl": 98.0, "profit": -100.0},
+            {"symbol": "XAUUSD", "type": "BUY", "volume": 1.0, "price_open": 100.0, "price_current": 99.5, "sl": 99.0, "profit": -50.0},
+        ]
+        r = self._module().aggregate_open_sl_exposure(
+            positions,
+            fake_profit,
+            symbol_normalizer=lambda s: s[:-2] if s.endswith(".X") else s,
+        )
+        self.assertEqual(r["entry_risk_usd"], 300.0)
+        self.assertEqual(r["risk_by_symbol"]["XAUUSD"], 300.0)
+        self.assertEqual(r["current_loss_by_symbol"]["XAUUSD"], 150.0)
+
+    def test_current_symbol_loss_nets_open_profit_and_loss(self):
+        positions = [
+            {"symbol": "XAUUSD.X", "type": "BUY", "volume": 1.0, "price_open": 100.0, "price_current": 101.0, "sl": 98.0, "profit": 100.0},
+            {"symbol": "XAUUSD", "type": "BUY", "volume": 1.0, "price_open": 100.0, "price_current": 98.5, "sl": 98.0, "profit": -150.0},
+        ]
+        r = self._module().aggregate_open_sl_exposure(
+            positions,
+            fake_profit,
+            symbol_normalizer=lambda s: s[:-2] if s.endswith(".X") else s,
+        )
+        self.assertEqual(r["current_loss_usd"], 50.0)
+        self.assertEqual(r["current_loss_by_symbol"]["XAUUSD"], 50.0)
+
+    def test_max_volume_for_risk_floors_to_broker_step(self):
+        m = self._module()
+        self.assertEqual(
+            m.max_volume_for_risk(
+                risk_budget_usd=275.0,
+                risk_per_lot_usd=1000.0,
+                volume_min=0.01,
+                volume_max=10.0,
+                volume_step=0.01,
+            ),
+            0.27,
+        )
+        self.assertEqual(
+            m.max_volume_for_risk(
+                risk_budget_usd=5.0,
+                risk_per_lot_usd=1000.0,
+                volume_min=0.01,
+                volume_max=10.0,
+                volume_step=0.01,
+            ),
+            0.0,
+        )
+
     def test_proposed_trade_requires_positive_volume_and_stop(self):
         m = self._module()
         with self.assertRaises(ValueError):

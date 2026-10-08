@@ -50,6 +50,11 @@ class RiskEngineTests(unittest.TestCase):
         self.assertEqual(r["safe_additional_risk_usd"], 1750.0)
         self.assertEqual(r["remaining_to_breach_usd"], 2500.0)
 
+    def test_safe_additional_risk_subtracts_existing_open_stop_exposure(self):
+        r = self._evaluate(open_sl_risk_usd=500.0)
+        self.assertEqual(r["safe_additional_risk_usd"], 1250.0)
+        self.assertEqual(r["binding_constraint"]["code"], "daily_drawdown")
+
     def test_personal_stop_can_trigger_before_provider_limit(self):
         r = self._evaluate(
             account={"balance": 50000.0, "equity": 48950.0, "profit": -1050.0},
@@ -58,11 +63,81 @@ class RiskEngineTests(unittest.TestCase):
         self.assertEqual(r["provider_status"], "SAFE")
         self.assertEqual(r["personal_status"], "STOP")
 
-    def test_unbounded_position_never_returns_safe_recommendation(self):
+    def test_unbounded_position_is_exposure_unknown_not_provider_breach(self):
         r = self._evaluate(unbounded_positions=1)
         self.assertTrue(r["has_unbounded_risk"])
-        self.assertEqual(r["provider_status"], "UNBOUNDED_RISK")
+        self.assertEqual(r["provider_status"], "SAFE")
+        self.assertEqual(r["exposure_status"], "UNBOUNDED_RISK")
+        self.assertEqual(r["recommendation_status"], "CANNOT_ASSERT_SAFE")
         self.assertEqual(r["safe_additional_risk_usd"], 0.0)
+
+    def test_unbounded_position_can_still_be_current_provider_breach(self):
+        p = dict(PROFILE)
+        p["risk_constraints"] = {
+            "aggregate_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 3.0},
+            "per_symbol_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 2.0},
+        }
+        r = self._evaluate(
+            profile=p,
+            unbounded_positions=1,
+            current_concurrent_loss_usd=1100.0,
+            current_loss_by_symbol={"XAUUSD": 1100.0},
+            proposed_symbol="XAUUSD",
+        )
+        self.assertEqual(r["provider_status"], "BREACH")
+        self.assertEqual(r["exposure_status"], "UNBOUNDED_RISK")
+        self.assertEqual(r["recommendation_status"], "CANNOT_ASSERT_SAFE")
+
+    def test_sgb_per_symbol_constraint_can_be_binding(self):
+        p = dict(PROFILE)
+        p["risk_constraints"] = {
+            "aggregate_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 3.0},
+            "per_symbol_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 2.0},
+        }
+        r = self._evaluate(
+            profile=p,
+            open_concurrent_risk_usd=700.0,
+            open_risk_by_symbol={"XAUUSD": 850.0},
+            proposed_symbol="XAUUSD",
+            proposed_symbol_risk_usd=200.0,
+        )
+        self.assertEqual(r["constraints"]["per_symbol"]["status"], "BREACH")
+        self.assertEqual(r["provider_status"], "BREACH")
+        self.assertEqual(r["binding_constraint"]["code"], "existing_provider_breach")
+        self.assertEqual(r["safe_additional_risk_usd"], 0.0)
+
+    def test_existing_other_symbol_breach_forces_zero_safe_budget(self):
+        p = dict(PROFILE)
+        p["risk_constraints"] = {
+            "aggregate_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 3.0},
+            "per_symbol_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 2.0},
+        }
+        r = self._evaluate(
+            profile=p,
+            open_concurrent_risk_usd=1200.0,
+            open_risk_by_symbol={"EURUSD": 1100.0, "XAUUSD": 100.0},
+            proposed_symbol="XAUUSD",
+            proposed_symbol_risk_usd=0.0,
+        )
+        self.assertEqual(r["provider_status"], "BREACH")
+        self.assertEqual(r["safe_additional_risk_usd"], 0.0)
+        self.assertEqual(r["binding_constraint"]["code"], "existing_provider_breach")
+
+    def test_sgb_aggregate_constraint_is_separate_from_symbol_constraint(self):
+        p = dict(PROFILE)
+        p["risk_constraints"] = {
+            "aggregate_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 3.0},
+            "per_symbol_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 2.0},
+        }
+        r = self._evaluate(
+            profile=p,
+            open_concurrent_risk_usd=1450.0,
+            open_risk_by_symbol={"XAUUSD": 400.0, "EURUSD": 1050.0},
+            proposed_symbol="XAUUSD",
+            proposed_symbol_risk_usd=0.0,
+        )
+        self.assertEqual(r["constraints"]["aggregate"]["status"], "HIGH_RISK")
+        self.assertEqual(r["constraints"]["per_symbol"]["status"], "SAFE")
 
     def test_negative_exposure_is_rejected(self):
         with self.assertRaises(ValueError):

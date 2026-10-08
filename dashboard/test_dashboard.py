@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from prop_metrics import build_prop_payload, next_reset_countdown, day_bucket
@@ -50,6 +50,118 @@ class PropMetricsTests(unittest.TestCase):
         self.assertEqual(payload["daily_drawdown"]["starting_balance"], 51000.0)
         self.assertEqual(payload["daily_drawdown"]["current_daily_loss"], 2000.0)
         self.assertEqual(payload["daily_drawdown"]["reference_quality"], "bridge_exact")
+
+    def test_profit_target_uses_realized_closed_pnl_not_floating_equity(self):
+        t0 = int(datetime(2026, 8, 1, 10, 0).timestamp())
+        t1 = int(datetime(2026, 8, 1, 11, 0).timestamp())
+        deals = [
+            _deal(10, 0, 0, "EURUSD", t0, 0.0, 0.1, 1.1),
+            _deal(10, 1, 1, "EURUSD", t1, 500.0, 0.1, 1.11),
+        ]
+        for d in deals:
+            d["commission"] = 0.0
+        payload = build_prop_payload(
+            account={"balance": 50500.0, "equity": 52500.0, "profit": 2000.0},
+            deal_list=deals,
+            open_positions=[],
+            profile=None,
+            now=datetime(2026, 8, 1, 12, 0),
+        )
+        self.assertEqual(payload["profit_target"]["current_pnl"], 500.0)
+        self.assertEqual(payload["profit_target"]["progress_pct"], 20.0)
+        self.assertEqual(payload["profit_target"]["status"], "IN_PROGRESS")
+        self.assertEqual(payload["live"]["total_pnl"], 2500.0)
+
+    def test_profit_target_uses_balance_even_when_history_is_not_loaded(self):
+        payload = build_prop_payload(
+            account={"balance": 50500.0, "equity": 52500.0, "profit": 2000.0},
+            deal_list=[],
+            open_positions=[],
+            profile=None,
+            now=datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(payload["profit_target"]["current_pnl"], 500.0)
+        self.assertEqual(payload["profit_target"]["progress_pct"], 20.0)
+        self.assertEqual(payload["profit_target"]["calculation_basis"], "balance_minus_initial")
+        self.assertEqual(payload["live"]["total_pnl"], 2500.0)
+
+    def test_moneta_profitable_day_requires_point_five_percent_closed_profit(self):
+        base = datetime(2026, 8, 1, 12, 0)
+        deals = []
+        for idx, profit in enumerate((10.0, 20.0, 249.99, 250.0), start=1):
+            op = int((base + timedelta(days=idx-1)).timestamp())
+            cl = op + 3600
+            a = _deal(idx, 0, 0, "EURUSD", op, 0.0)
+            b = _deal(idx, 1, 1, "EURUSD", cl, profit)
+            a["commission"] = b["commission"] = 0.0
+            deals.extend([a, b])
+        payload = build_prop_payload(
+            account={"balance": 50529.99, "equity": 50529.99, "profit": 0.0},
+            deal_list=deals,
+            open_positions=[],
+            profile=None,
+            now=datetime(2026, 8, 6, 12, 0),
+        )
+        self.assertEqual(payload["trading_days"]["counted_days"], 1)
+        self.assertEqual(payload["trading_days"]["qualifying_days"], 1)
+        self.assertFalse(payload["trading_days"]["target_met"])
+
+    def test_broker_server_day_bucket_uses_server_utc_offset(self):
+        before = int(datetime(2026, 8, 1, 20, 59, tzinfo=timezone.utc).timestamp())
+        after = int(datetime(2026, 8, 1, 21, 0, tzinfo=timezone.utc).timestamp())
+        self.assertNotEqual(
+            day_bucket(before, 0, reset_basis="broker_server", server_utc_offset_seconds=3*3600),
+            day_bucket(after, 0, reset_basis="broker_server", server_utc_offset_seconds=3*3600),
+        )
+
+    def test_sgb_daily_drawdown_is_unavailable_without_server_offset(self):
+        from provider_profiles import get_profile
+        payload = build_prop_payload(
+            account={"balance": 50000.0, "equity": 49500.0, "profit": -500.0},
+            deal_list=[],
+            open_positions=[],
+            profile=get_profile("sgb_plan_a_phase1"),
+            now=datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        self.assertFalse(payload["daily_drawdown"]["available"])
+        self.assertEqual(payload["daily_drawdown"]["reference_quality"], "broker_offset_unavailable")
+        self.assertEqual(payload["daily_drawdown"]["status"], "UNAVAILABLE")
+
+    def test_moneta_trading_day_boundary_is_22_utc(self):
+        before = int(datetime(2026, 8, 1, 21, 59, tzinfo=timezone.utc).timestamp())
+        after = int(datetime(2026, 8, 1, 22, 0, tzinfo=timezone.utc).timestamp())
+        self.assertNotEqual(
+            day_bucket(before, 0, reset_hour_utc=22),
+            day_bucket(after, 0, reset_hour_utc=22),
+        )
+
+    def test_profitable_day_rule_is_unavailable_when_deal_time_basis_unknown(self):
+        payload = build_prop_payload(
+            account={"balance": 50000.0, "equity": 50000.0, "profit": 0.0},
+            deal_list=[],
+            open_positions=[],
+            profile=None,
+            now=datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc),
+            deal_times_are_utc=False,
+        )
+        self.assertTrue(payload["today_trading_day"]["applicable"])
+        self.assertFalse(payload["today_trading_day"]["available"])
+        self.assertEqual(payload["today_trading_day"]["status"], "UNAVAILABLE")
+        self.assertTrue(payload["trading_days"]["applicable"])
+        self.assertFalse(payload["trading_days"]["available"])
+
+    def test_profile_without_profitable_day_rule_reports_not_applicable(self):
+        from provider_profiles import get_profile
+        payload = build_prop_payload(
+            account={"balance": 50000.0, "equity": 50000.0, "profit": 0.0},
+            deal_list=[],
+            open_positions=[],
+            profile=get_profile("sgb_plan_a_phase1"),
+            now=datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        self.assertFalse(payload["today_trading_day"]["applicable"])
+        self.assertEqual(payload["today_trading_day"]["status"], "NOT_APPLICABLE")
+        self.assertFalse(payload["trading_days"]["applicable"])
 
     def test_countdown_format(self):
         now = datetime(2026, 8, 4, 12, 0, 0)
@@ -243,6 +355,7 @@ class FlaskApiTests(unittest.TestCase):
         self.assertIn("Pre-Trade Risk Guard", text)
         self.assertIn("Can I Take This Trade?", text)
         self.assertIn("Advisory only", text)
+        self.assertIn("Max safe volume", text)
 
     @patch("app.get_live_payload")
     def test_api_data_includes_risk_guard(self, mock_live):
@@ -296,6 +409,11 @@ class FlaskApiTests(unittest.TestCase):
         acc.leverage = 100
         mock_mt5.account_info.return_value = acc
         mock_mt5.positions_get.return_value = []
+        symbol_info = MagicMock()
+        symbol_info.volume_min = 0.01
+        symbol_info.volume_max = 100.0
+        symbol_info.volume_step = 0.01
+        mock_mt5.symbol_info.return_value = symbol_info
 
         r = self.client.post("/api/risk/preview", json={
             "symbol": "XAUUSD",
@@ -309,6 +427,9 @@ class FlaskApiTests(unittest.TestCase):
         self.assertTrue(body["advisory_only"])
         self.assertEqual(body["trade"]["risk_usd"], 120.0)
         self.assertIn("risk", body)
+        self.assertIn("sizing", body)
+        self.assertEqual(body["sizing"]["max_safe_volume"], 14.58)
+        self.assertIn("binding_constraint", body["sizing"])
         self.assertNotIn("executed", body)
 
     def test_risk_preview_rejects_bad_trade_input(self):
@@ -317,6 +438,30 @@ class FlaskApiTests(unittest.TestCase):
         })
         self.assertEqual(r.status_code, 400)
         self.assertFalse(r.get_json()["ok"])
+
+    def test_server_time_deals_get_separate_utc_metric_timestamp(self):
+        deals = [{"time": 10800, "time_msc": 10800000, "symbol": "XAUUSD"}]
+        out = self.dash._attach_utc_deal_times(deals, 10800)
+        self.assertEqual(out[0]["time"], 10800)
+        self.assertEqual(out[0]["time_utc"], 0)
+        self.assertEqual(out[0]["time_msc_utc"], 0)
+
+    def test_bridge_daily_reference_only_used_when_profile_semantics_match(self):
+        from provider_profiles import get_profile
+        moneta = get_profile("moneta_2step_phase1_5_10")
+        sgb = get_profile("sgb_plan_a_phase1")
+        snapshot = {
+            "day_reference": 51000.0,
+            "day_reference_captured": True,
+            "day_reset_utc": 22,
+        }
+        value, quality = self.dash._bridge_day_reference_for_profile(snapshot, moneta)
+        self.assertEqual(value, 51000.0)
+        self.assertEqual(quality, "bridge_captured_reset")
+
+        value, quality = self.dash._bridge_day_reference_for_profile(snapshot, sgb)
+        self.assertIsNone(value)
+        self.assertEqual(quality, "profile_reconstructed")
 
     def test_bridge_reader_fresh_file(self):
         from bridge_reader import load_bridge, account_from_bridge, deals_from_bridge
