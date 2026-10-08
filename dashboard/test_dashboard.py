@@ -93,6 +93,27 @@ class PropMetricsTests(unittest.TestCase):
         self.assertEqual(payload["trading_days"]["qualifying_days"], 1)
         self.assertFalse(payload["trading_days"]["target_met"])
 
+    def test_broker_server_day_bucket_uses_server_utc_offset(self):
+        before = int(datetime(2026, 8, 1, 20, 59, tzinfo=timezone.utc).timestamp())
+        after = int(datetime(2026, 8, 1, 21, 0, tzinfo=timezone.utc).timestamp())
+        self.assertNotEqual(
+            day_bucket(before, 0, reset_basis="broker_server", server_utc_offset_seconds=3*3600),
+            day_bucket(after, 0, reset_basis="broker_server", server_utc_offset_seconds=3*3600),
+        )
+
+    def test_sgb_daily_drawdown_is_unavailable_without_server_offset(self):
+        from provider_profiles import get_profile
+        payload = build_prop_payload(
+            account={"balance": 50000.0, "equity": 49500.0, "profit": -500.0},
+            deal_list=[],
+            open_positions=[],
+            profile=get_profile("sgb_plan_a_phase1"),
+            now=datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        self.assertFalse(payload["daily_drawdown"]["available"])
+        self.assertEqual(payload["daily_drawdown"]["reference_quality"], "broker_offset_unavailable")
+        self.assertEqual(payload["daily_drawdown"]["status"], "UNAVAILABLE")
+
     def test_moneta_trading_day_boundary_is_22_utc(self):
         before = int(datetime(2026, 8, 1, 21, 59, tzinfo=timezone.utc).timestamp())
         after = int(datetime(2026, 8, 1, 22, 0, tzinfo=timezone.utc).timestamp())
