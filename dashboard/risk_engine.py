@@ -295,6 +295,12 @@ def evaluate_risk(
         safe_additional = 0.0
         binding_constraint = {"code": "unavailable", "remaining_usd": 0.0}
 
+    if provider_status == "BREACH":
+        safe_additional = 0.0
+        binding_constraint = {
+            "code": "existing_provider_breach",
+            "remaining_usd": 0.0,
+        }
     if has_unbounded:
         safe_additional = 0.0
 
