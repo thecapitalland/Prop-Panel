@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from prop_metrics import build_prop_payload, next_reset_countdown, day_bucket
@@ -50,6 +50,56 @@ class PropMetricsTests(unittest.TestCase):
         self.assertEqual(payload["daily_drawdown"]["starting_balance"], 51000.0)
         self.assertEqual(payload["daily_drawdown"]["current_daily_loss"], 2000.0)
         self.assertEqual(payload["daily_drawdown"]["reference_quality"], "bridge_exact")
+
+    def test_profit_target_uses_realized_closed_pnl_not_floating_equity(self):
+        t0 = int(datetime(2026, 8, 1, 10, 0).timestamp())
+        t1 = int(datetime(2026, 8, 1, 11, 0).timestamp())
+        deals = [
+            _deal(10, 0, 0, "EURUSD", t0, 0.0, 0.1, 1.1),
+            _deal(10, 1, 1, "EURUSD", t1, 500.0, 0.1, 1.11),
+        ]
+        for d in deals:
+            d["commission"] = 0.0
+        payload = build_prop_payload(
+            account={"balance": 50500.0, "equity": 52500.0, "profit": 2000.0},
+            deal_list=deals,
+            open_positions=[],
+            profile=None,
+            now=datetime(2026, 8, 1, 12, 0),
+        )
+        self.assertEqual(payload["profit_target"]["current_pnl"], 500.0)
+        self.assertEqual(payload["profit_target"]["progress_pct"], 20.0)
+        self.assertEqual(payload["profit_target"]["status"], "IN_PROGRESS")
+        self.assertEqual(payload["live"]["total_pnl"], 2500.0)
+
+    def test_moneta_profitable_day_requires_point_five_percent_closed_profit(self):
+        base = datetime(2026, 8, 1, 12, 0)
+        deals = []
+        for idx, profit in enumerate((10.0, 20.0, 249.99, 250.0), start=1):
+            op = int((base + timedelta(days=idx-1)).timestamp())
+            cl = op + 3600
+            a = _deal(idx, 0, 0, "EURUSD", op, 0.0)
+            b = _deal(idx, 1, 1, "EURUSD", cl, profit)
+            a["commission"] = b["commission"] = 0.0
+            deals.extend([a, b])
+        payload = build_prop_payload(
+            account={"balance": 50529.99, "equity": 50529.99, "profit": 0.0},
+            deal_list=deals,
+            open_positions=[],
+            profile=None,
+            now=datetime(2026, 8, 6, 12, 0),
+        )
+        self.assertEqual(payload["trading_days"]["counted_days"], 1)
+        self.assertEqual(payload["trading_days"]["qualifying_days"], 1)
+        self.assertFalse(payload["trading_days"]["target_met"])
+
+    def test_moneta_trading_day_boundary_is_22_utc(self):
+        before = int(datetime(2026, 8, 1, 21, 59, tzinfo=timezone.utc).timestamp())
+        after = int(datetime(2026, 8, 1, 22, 0, tzinfo=timezone.utc).timestamp())
+        self.assertNotEqual(
+            day_bucket(before, 0, reset_hour_utc=22),
+            day_bucket(after, 0, reset_hour_utc=22),
+        )
 
     def test_countdown_format(self):
         now = datetime(2026, 8, 4, 12, 0, 0)
