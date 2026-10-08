@@ -25,11 +25,13 @@ All notable changes to Prop-Panel are documented here.
 - Public configuration ships as `dashboard/terminals.example.json`.
 - CI discovers all `test_*.py` modules automatically.
 - Prop metrics now normalize provider profiles before calculation.
-- Moneta Profit Target now uses realized trading P/L only and excludes floating P/L.
+- Moneta Profit Target now uses `balance - initial balance`, excluding floating P/L and avoiding dependency on locally loaded history.
 - Moneta minimum profitable days now require the configured 0.5% daily closed-profit threshold.
-- Trading-day bucketing now uses provider UTC reset rules when available, avoiding workstation-timezone drift.
+- Trading-day bucketing now distinguishes UTC resets from broker-server midnight. MT5 server timestamps are normalized separately for rule math, and provider-day metrics fail closed when the required time basis is unavailable.
 - Provider compliance, exposure certainty, and trader recommendation are reported separately.
-- SGB current floating loss and projected loss-at-stop are evaluated separately so no-SL positions can still surface current rule breaches.
+- SGB current net equity loss and projected loss-at-stop are evaluated separately so no-SL positions can still surface current rule breaches.
+- Existing provider breaches force safe additional risk / maximum safe volume to zero.
+- Safe sizing subtracts existing open stop exposure from daily, personal, aggregate, and per-symbol budgets.
 
 ### Safety
 - Risk preview remains read-only and advisory.
