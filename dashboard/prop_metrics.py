@@ -18,20 +18,45 @@ def _status(used_pct: float, warn_at: float = 60.0, breach_at: float = 100.0) ->
     return "SAFE"
 
 
-def day_bucket(ts: int, reset_hour: int) -> int:
-    """Trading-day id in local time, shifted by reset_hour."""
-    dt = datetime.fromtimestamp(int(ts))
-    shifted = dt - timedelta(hours=reset_hour)
+def day_bucket(ts: int, reset_hour: int, reset_hour_utc: Optional[int] = None) -> int:
+    """Trading-day id using provider reset semantics.
+
+    When reset_hour_utc is configured, epoch timestamps are bucketed in UTC so
+    laptop/server timezone cannot move a deal into the wrong provider day.
+    """
+    if reset_hour_utc is not None:
+        dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+        shifted = dt - timedelta(hours=int(reset_hour_utc))
+    else:
+        dt = datetime.fromtimestamp(int(ts))
+        shifted = dt - timedelta(hours=int(reset_hour))
     return int(shifted.strftime("%Y%m%d"))
 
 
-def next_reset_countdown(now: datetime, reset_hour: int) -> Dict[str, Any]:
-    """Seconds until next daily reset (same calendar tz as `now`)."""
-    local = now.replace(tzinfo=None) if now.tzinfo else now
-    target = local.replace(hour=reset_hour, minute=0, second=0, microsecond=0)
-    if local >= target:
-        target = target + timedelta(days=1)
-    remaining = int((target - local).total_seconds())
+def next_reset_countdown(
+    now: datetime,
+    reset_hour: int,
+    reset_hour_utc: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Seconds until next provider reset."""
+    if reset_hour_utc is not None:
+        current = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+        current = current.astimezone(timezone.utc)
+        target = current.replace(
+            hour=int(reset_hour_utc), minute=0, second=0, microsecond=0
+        )
+        if current >= target:
+            target = target + timedelta(days=1)
+        reset_label = int(reset_hour_utc)
+        reset_timezone = "UTC"
+    else:
+        current = now.replace(tzinfo=None) if now.tzinfo else now
+        target = current.replace(hour=reset_hour, minute=0, second=0, microsecond=0)
+        if current >= target:
+            target = target + timedelta(days=1)
+        reset_label = int(reset_hour)
+        reset_timezone = "server/local"
+    remaining = int((target - current).total_seconds())
     h, rem = divmod(max(0, remaining), 3600)
     m, s = divmod(rem, 60)
     return {
@@ -40,7 +65,8 @@ def next_reset_countdown(now: datetime, reset_hour: int) -> Dict[str, Any]:
         "mm": m,
         "ss": s,
         "label": f"{h:02d}:{m:02d}:{s:02d}",
-        "reset_hour": reset_hour,
+        "reset_hour": reset_label,
+        "reset_timezone": reset_timezone,
         "next_reset_iso": target.isoformat(sep=" ", timespec="seconds"),
     }
 
@@ -129,7 +155,7 @@ def build_prop_payload(
 ) -> Dict[str, Any]:
     """Assemble full dashboard JSON from account + deals (no MT5 calls)."""
     profile = normalize_profile(profile=profile)
-    now = now or datetime.now()
+    now = now or datetime.now(timezone.utc)
     initial = float(profile["initial_balance"])
     pt = float(profile["profit_target_usd"])
     daily_lim = float(profile["daily_loss_limit_usd"])
@@ -137,6 +163,9 @@ def build_prop_payload(
     min_days = int(profile["min_trading_days"])
     min_day_pct = float(profile["min_day_profit_pct"])
     reset_hour = int(profile["day_reset_hour_server"])
+    reset_hour_utc = (profile.get("daily_loss") or {}).get("reset_hour_utc")
+    if reset_hour_utc is not None:
+        reset_hour_utc = int(reset_hour_utc)
     cons_cap = float(profile["consistency_cap_pct"])
 
     balance = float(account.get("balance", 0.0))
@@ -150,16 +179,27 @@ def build_prop_payload(
     if now < today_start:
         today_start = today_start - timedelta(days=1)
 
-    # Trading days / today: attribute each OUT deal separately (partial closes on exit day)
+    # Provider trading-day P/L: include every trade-deal monetary effect
+    # (profit/swap/commission), not balance/credit operations.
     daily_nets: Dict[int, float] = {}
+    realized_trading_pnl = 0.0
     for d in deal_list:
-        if not d.get("symbol") or int(d.get("entry", -1)) not in (1, 2):
+        if not d.get("symbol"):
             continue
         pnl = float(d.get("profit", 0) + d.get("swap", 0) + d.get("commission", 0))
-        b = day_bucket(int(d["time"]), reset_hour)
+        realized_trading_pnl += pnl
+        b = day_bucket(int(d["time"]), reset_hour, reset_hour_utc=reset_hour_utc)
         daily_nets[b] = daily_nets.get(b, 0.0) + pnl
 
-    today_bucket = day_bucket(int(now.timestamp()), reset_hour)
+    if now.tzinfo is None and reset_hour_utc is not None:
+        now_for_bucket = now.replace(tzinfo=timezone.utc)
+    else:
+        now_for_bucket = now
+    today_bucket = day_bucket(
+        int(now_for_bucket.timestamp()),
+        reset_hour,
+        reset_hour_utc=reset_hour_utc,
+    )
     today_realized = float(daily_nets.get(today_bucket, 0.0))
 
     # Prefer an explicit provider reset reference when a live bridge captured it.
@@ -176,23 +216,27 @@ def build_prop_payload(
     overall_used_pct = (current_overall_loss / max_lim * 100.0) if max_lim > 0 else 0.0
 
     total_pnl = equity - initial
-    profit_progress_pct = (total_pnl / pt * 100.0) if pt > 0 else 0.0
-    if total_pnl < 0:
+    realized_target_pnl = realized_trading_pnl
+    profit_progress_pct = (realized_target_pnl / pt * 100.0) if pt > 0 else 0.0
+    if realized_target_pnl < 0:
         profit_progress_pct = 0.0
 
     day_target = initial * (min_day_pct / 100.0)
     day_remaining = max(0.0, day_target - today_realized)
     day_hit = today_realized >= day_target > 0
     day_progress_pct = (today_realized / day_target * 100.0) if day_target > 0 else 0.0
-    # Moneta "trading day" progress (matches prior Cockpit + portal progress card):
-    # a day with net closed PnL > 0 counts toward the minimum trading days.
-    # Days that also clear the 0.5% soft target are reported separately.
-    qualifying = [d for d, net in daily_nets.items() if net >= day_target]
+    qualifying = [
+        d for d, net in daily_nets.items()
+        if (net >= day_target if day_target > 0 else net > 0)
+    ]
     profitable_days = [d for d, net in daily_nets.items() if net > 0]
+    counted_days = qualifying if min_day_pct > 0 else profitable_days
     days_with_closes = set()
     for d in deal_list:
         if d.get("symbol") and int(d.get("entry", -1)) in (1, 2):
-            days_with_closes.add(day_bucket(int(d["time"]), reset_hour))
+            days_with_closes.add(
+                day_bucket(int(d["time"]), reset_hour, reset_hour_utc=reset_hour_utc)
+            )
     best_day = max(daily_nets.values()) if daily_nets else 0.0
     gross_profit_days = sum(v for v in daily_nets.values() if v > 0)
     consistency_pct = (best_day / gross_profit_days * 100.0) if gross_profit_days > 0 else 0.0
@@ -322,10 +366,12 @@ def build_prop_payload(
         },
         "profit_target": {
             "target_usd": pt,
-            "current_pnl": round(max(0.0, total_pnl), 2),
-            "remaining_usd": round(max(0.0, pt - max(0.0, total_pnl)), 2),
+            "current_pnl": round(max(0.0, realized_target_pnl), 2),
+            "realized_pnl": round(realized_target_pnl, 2),
+            "floating_excluded_usd": round(floating, 2),
+            "remaining_usd": round(max(0.0, pt - max(0.0, realized_target_pnl)), 2),
             "progress_pct": round(min(100.0, max(0.0, profit_progress_pct)), 2),
-            "status": "MET" if total_pnl >= pt else "IN_PROGRESS",
+            "status": "MET" if realized_target_pnl >= pt else "IN_PROGRESS",
         },
         "today_trading_day": {
             "realized_pnl": round(today_realized, 2),
@@ -336,14 +382,13 @@ def build_prop_payload(
             "status": "MET" if day_hit else "NOT_MET",
         },
         "trading_days": {
-            # Primary progress = profitable closed days (portal "Trading Days Progress")
-            "counted_days": len(profitable_days),
-            "qualifying_days": len(profitable_days),  # backward-compat for UI
+            "counted_days": len(counted_days),
+            "qualifying_days": len(counted_days),
             "days_hitting_05pct": len(qualifying),
             "profitable_days": len(profitable_days),
             "days_with_trades": len(days_with_closes),
             "required": min_days,
-            "target_met": len(profitable_days) >= min_days,
+            "target_met": len(counted_days) >= min_days,
             "best_day_profit": round(best_day, 2),
             "consistency_pct": round(consistency_pct, 1),
             "consistency_cap_pct": cons_cap,
@@ -354,13 +399,17 @@ def build_prop_payload(
                 {
                     "day": str(k),
                     "pnl": round(v, 2),
-                    "counts": v > 0,
-                    "hits_05pct": v >= day_target,
+                    "counts": (v >= day_target if day_target > 0 else v > 0),
+                    "hits_05pct": (v >= day_target if day_target > 0 else v > 0),
                 }
                 for k, v in sorted(daily_nets.items())
             ],
         },
-        "daily_reset": next_reset_countdown(now, reset_hour),
+        "daily_reset": next_reset_countdown(
+            now,
+            reset_hour,
+            reset_hour_utc=reset_hour_utc,
+        ),
         "chart": {
             "equity_curve": curve[-200:],
             "lines": {
