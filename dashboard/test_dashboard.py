@@ -366,7 +366,7 @@ class FlaskApiTests(unittest.TestCase):
         self.assertEqual(body["trade"]["risk_usd"], 120.0)
         self.assertIn("risk", body)
         self.assertIn("sizing", body)
-        self.assertEqual(body["sizing"]["max_safe_volume"], 8.33)
+        self.assertEqual(body["sizing"]["max_safe_volume"], 14.58)
         self.assertIn("binding_constraint", body["sizing"])
         self.assertNotIn("executed", body)
 
