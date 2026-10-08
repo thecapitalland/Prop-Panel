@@ -37,6 +37,24 @@ class ProviderProfileTests(unittest.TestCase):
         self.assertEqual(a["daily_loss_limit_pct"], 5.0)
         self.assertEqual(a["max_loss_limit_pct"], 12.0)
 
+    def test_sgb_risk_constraints_include_aggregate_and_per_symbol(self):
+        m = self._module()
+        p50 = m.normalize_profile(profile={"initial_balance": 50000.0}, profile_id="sgb_plan_a_phase1")
+        p100 = m.normalize_profile(profile={"initial_balance": 100000.0}, profile_id="sgb_plan_a_phase1")
+        self.assertEqual(p50["risk_constraints"]["aggregate_open_risk"]["limit_pct"], 3.0)
+        self.assertEqual(p100["risk_constraints"]["aggregate_open_risk"]["limit_pct"], 2.0)
+        self.assertEqual(p50["risk_constraints"]["per_symbol_open_risk"]["limit_pct"], 2.0)
+        self.assertEqual(
+            p50["risk_constraints"]["per_symbol_open_risk"]["source_type"],
+            "user_supplied_account_rule",
+        )
+
+    def test_sgb_symbol_normalization_strips_dot_x_suffix(self):
+        m = self._module()
+        p = m.get_profile("sgb_plan_a_phase1")
+        self.assertEqual(m.normalize_symbol("XAUUSD.X", p), "XAUUSD")
+        self.assertEqual(m.normalize_symbol("XAUUSD", p), "XAUUSD")
+
     def test_profile_override_recalculates_usd_limits_for_account_size(self):
         p = self._module().normalize_profile(
             profile={"initial_balance": 100000.0},
