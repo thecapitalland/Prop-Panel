@@ -54,6 +54,19 @@ class RiskAdapterTests(unittest.TestCase):
         self.assertEqual(r["risk_by_symbol"]["XAUUSD"], 300.0)
         self.assertEqual(r["current_loss_by_symbol"]["XAUUSD"], 150.0)
 
+    def test_current_symbol_loss_nets_open_profit_and_loss(self):
+        positions = [
+            {"symbol": "XAUUSD.X", "type": "BUY", "volume": 1.0, "price_open": 100.0, "price_current": 101.0, "sl": 98.0, "profit": 100.0},
+            {"symbol": "XAUUSD", "type": "BUY", "volume": 1.0, "price_open": 100.0, "price_current": 98.5, "sl": 98.0, "profit": -150.0},
+        ]
+        r = self._module().aggregate_open_sl_exposure(
+            positions,
+            fake_profit,
+            symbol_normalizer=lambda s: s[:-2] if s.endswith(".X") else s,
+        )
+        self.assertEqual(r["current_loss_usd"], 50.0)
+        self.assertEqual(r["current_loss_by_symbol"]["XAUUSD"], 50.0)
+
     def test_max_volume_for_risk_floors_to_broker_step(self):
         m = self._module()
         self.assertEqual(
