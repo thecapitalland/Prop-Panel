@@ -920,7 +920,7 @@ async function updateDashboard() {
         const d = data.daily_drawdown;
         if (d.available === false) {
             document.getElementById('daily-loss-val').innerText = `N/A / ${money(d.limit_usd)}`;
-            document.getElementById('daily-pct').innerText = 'Broker server UTC offset required';
+            document.getElementById('daily-pct').innerText = 'Provider time reference unavailable';
             document.getElementById('daily-bar').style.width = '0%';
             document.getElementById('daily-status').innerText = 'UNAVAILABLE';
             document.getElementById('daily-status').className =
@@ -952,6 +952,12 @@ async function updateDashboard() {
             document.getElementById('today-bar').style.width = '0%';
             document.getElementById('today-status').innerText = 'N/A';
             document.getElementById('today-status').className = 'text-sm font-semibold mt-1 text-gray-400';
+        } else if (td.available === false) {
+            todayLabel.innerText = 'Today 0.5% Trading Day';
+            document.getElementById('today-val').innerText = 'Provider time unavailable';
+            document.getElementById('today-bar').style.width = '0%';
+            document.getElementById('today-status').innerText = 'UNAVAILABLE';
+            document.getElementById('today-status').className = 'text-sm font-semibold mt-1 text-amber-300';
         } else {
             todayLabel.innerText = 'Today 0.5% Trading Day';
             document.getElementById('today-val').innerText = `${money(td.realized_pnl)} / ${money(td.target_usd)}`;
@@ -967,6 +973,11 @@ async function updateDashboard() {
             document.getElementById('days-status').innerText = 'N/A';
             document.getElementById('days-status').className = 'text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400';
             document.getElementById('days-note').innerText = 'No minimum profitable-day rule in the active provider profile.';
+        } else if (days.available === false) {
+            document.getElementById('days-val').innerText = '—';
+            document.getElementById('days-status').innerText = 'UNAVAILABLE';
+            document.getElementById('days-status').className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300';
+            document.getElementById('days-note').innerText = 'Provider trading-day boundary is unavailable; configure broker server time or use the EA bridge.';
         } else {
             document.getElementById('days-val').innerText = `${counted} / ${days.required}`;
             setStatus(document.getElementById('days-status'), days.target_met ? 'MET' : 'IN_PROGRESS');
