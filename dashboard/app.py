@@ -374,6 +374,32 @@ def _risk_guard_payload(
         }
 
 
+def _bridge_day_reference_for_profile(
+    prop_snapshot: Dict[str, Any],
+    profile: Dict[str, Any],
+) -> Tuple[Optional[float], str]:
+    """Use bridge reset reference only when its semantics match the active profile."""
+    rule = profile.get("daily_loss") or {}
+    if rule.get("reference") != "max_balance_equity_at_reset":
+        return None, "profile_reconstructed"
+
+    expected_reset = rule.get("reset_hour_utc")
+    bridge_reset = prop_snapshot.get("day_reset_utc")
+    if expected_reset is None or bridge_reset is None:
+        return None, "profile_reconstructed"
+    try:
+        if int(expected_reset) != int(bridge_reset):
+            return None, "profile_reconstructed"
+        value = float(prop_snapshot.get("day_reference") or 0.0)
+    except (TypeError, ValueError):
+        return None, "profile_reconstructed"
+    if value <= 0:
+        return None, "profile_reconstructed"
+
+    captured = bool(prop_snapshot.get("day_reference_captured", False))
+    return value, ("bridge_captured_reset" if captured else "bridge_estimated")
+
+
 def _validate_preview_body(body: Dict[str, Any]) -> Optional[str]:
     symbol = str(body.get("symbol") or "").strip()
     side = str(body.get("side") or "").upper()
@@ -449,8 +475,9 @@ def get_live_payload() -> Dict[str, Any]:
                 "active": True,
             }
             prop_snapshot = raw.get("prop") or {}
-            bridge_day_ref = prop_snapshot.get("day_reference")
-            bridge_day_ref_captured = bool(prop_snapshot.get("day_reference_captured", False))
+            bridge_day_ref, bridge_day_quality = _bridge_day_reference_for_profile(
+                prop_snapshot, profile
+            )
             payload = build_prop_payload(
                 account=account,
                 deal_list=deals,
@@ -458,14 +485,8 @@ def get_live_payload() -> Dict[str, Any]:
                 profile=profile,
                 now=datetime.now(timezone.utc),
                 terminal=term_meta,
-                day_start_reference=(
-                    float(bridge_day_ref)
-                    if bridge_day_ref is not None and float(bridge_day_ref) > 0
-                    else None
-                ),
-                day_reference_quality=(
-                    "bridge_captured_reset" if bridge_day_ref_captured else "bridge_estimated"
-                ),
+                day_start_reference=bridge_day_ref,
+                day_reference_quality=bridge_day_quality,
             )
             payload["ok"] = True
             payload["terminals"] = list_terminals(cfg)
