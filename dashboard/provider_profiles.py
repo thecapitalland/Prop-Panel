@@ -27,6 +27,8 @@ def _profile(
     reset_hour_utc: Optional[int] = None,
     rules_version: str = "2026-10",
     source_url: Optional[str] = None,
+    risk_constraints: Optional[Dict[str, Any]] = None,
+    symbol_normalization: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     return {
         "profile_id": profile_id,
@@ -51,10 +53,34 @@ def _profile(
             "reset_hour_server": int(reset_hour_server),
             "reset_hour_utc": reset_hour_utc,
         },
+        "risk_constraints": deepcopy(risk_constraints or {}),
+        "symbol_normalization": deepcopy(symbol_normalization or {}),
         "rules_version": rules_version,
         "source_url": source_url,
-        "verified_at": "2026-10-07",
+        "verified_at": "2026-10-08",
     }
+
+
+_SGB_RISK_CONSTRAINTS = {
+    "aggregate_open_risk": {
+        "enabled": True,
+        "basis": "current_balance",
+        "tiers": [
+            {"max_initial_balance": 50000.0, "limit_pct": 3.0},
+            {"min_initial_balance": 100000.0, "limit_pct": 2.0},
+        ],
+        "source_type": "public_provider_rule",
+        "source_url": "https://sarmayegozarebartar.com/select-the-rules/",
+    },
+    "per_symbol_open_risk": {
+        "enabled": True,
+        "basis": "current_balance",
+        "limit_pct": 2.0,
+        "source_type": "user_supplied_account_rule",
+        "source_url": None,
+        "note": "Concurrent loss/risk on one normalized symbol must not exceed 2%.",
+    },
+}
 
 
 _PROFILES: Dict[str, Dict[str, Any]] = {
@@ -106,7 +132,10 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
         max_loss_pct=12.0,
         daily_reference="day_start_balance",
         reset_hour_server=0,
+        reset_hour_utc=0,
         source_url="https://sarmayegozarebartar.com/select-the-rules/",
+        risk_constraints=_SGB_RISK_CONSTRAINTS,
+        symbol_normalization={"strip_suffixes": [".X"]},
     ),
     "sgb_plan_b_phase1": _profile(
         profile_id="sgb_plan_b_phase1",
@@ -120,7 +149,10 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
         max_loss_pct=12.0,
         daily_reference="day_start_balance",
         reset_hour_server=0,
+        reset_hour_utc=0,
         source_url="https://sarmayegozarebartar.com/select-the-rules/",
+        risk_constraints=_SGB_RISK_CONSTRAINTS,
+        symbol_normalization={"strip_suffixes": [".X"]},
     ),
     "custom": _profile(
         profile_id="custom",
@@ -136,6 +168,30 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
 }
 
 
+def _tier_matches(tier: Dict[str, Any], initial: float) -> bool:
+    min_value = tier.get("min_initial_balance")
+    max_value = tier.get("max_initial_balance")
+    if min_value is not None and initial < float(min_value):
+        return False
+    if max_value is not None and initial > float(max_value):
+        return False
+    return True
+
+
+def _materialize_constraints(constraints: Dict[str, Any], initial: float) -> Dict[str, Any]:
+    out = deepcopy(constraints or {})
+    for rule in out.values():
+        tiers = rule.get("tiers") or []
+        if tiers:
+            matches = [t for t in tiers if _tier_matches(t, initial)]
+            if matches:
+                rule["limit_pct"] = float(matches[0]["limit_pct"])
+            else:
+                rule["enabled"] = False
+                rule["unavailable_reason"] = f"no configured tier for initial balance {initial:g}"
+    return out
+
+
 def _materialize(profile: Dict[str, Any]) -> Dict[str, Any]:
     p = deepcopy(profile)
     initial = float(p.get("initial_balance") or 0.0)
@@ -145,7 +201,20 @@ def _materialize(profile: Dict[str, Any]) -> Dict[str, Any]:
         p["daily_loss_limit_usd"] = round(initial * float(p["daily_loss_limit_pct"]) / 100.0, 2)
     if "max_loss_limit_pct" in p:
         p["max_loss_limit_usd"] = round(initial * float(p["max_loss_limit_pct"]) / 100.0, 2)
+    p["risk_constraints"] = _materialize_constraints(p.get("risk_constraints") or {}, initial)
     return p
+
+
+def normalize_symbol(symbol: str, profile: Dict[str, Any]) -> str:
+    """Normalize a broker symbol only by explicit profile rules."""
+    value = str(symbol or "").strip().upper()
+    cfg = profile.get("symbol_normalization") or {}
+    for suffix in cfg.get("strip_suffixes") or []:
+        suffix_u = str(suffix).upper()
+        if suffix_u and value.endswith(suffix_u):
+            value = value[: -len(suffix_u)]
+            break
+    return value
 
 
 def get_profile(profile_id: str) -> Dict[str, Any]:
@@ -168,10 +237,18 @@ def normalize_profile(
     if chosen and chosen != "legacy_custom":
         base = get_profile(str(chosen))
         base.update(supplied)
-        if isinstance(get_profile(str(chosen)).get("daily_loss"), dict):
-            nested = get_profile(str(chosen))["daily_loss"]
+        canonical = get_profile(str(chosen))
+        if isinstance(canonical.get("daily_loss"), dict):
+            nested = canonical["daily_loss"]
             nested.update(supplied.get("daily_loss") or {})
             base["daily_loss"] = nested
+        if isinstance(canonical.get("risk_constraints"), dict):
+            nested_constraints = canonical["risk_constraints"]
+            for key, value in (supplied.get("risk_constraints") or {}).items():
+                merged_rule = deepcopy(nested_constraints.get(key) or {})
+                merged_rule.update(value or {})
+                nested_constraints[key] = merged_rule
+            base["risk_constraints"] = nested_constraints
         return _materialize(base)
 
     if not supplied:
@@ -185,6 +262,8 @@ def normalize_profile(
     supplied.setdefault("rules_version", "legacy")
     supplied.setdefault("source_url", None)
     supplied.setdefault("verified_at", None)
+    supplied.setdefault("risk_constraints", {})
+    supplied.setdefault("symbol_normalization", {})
     supplied.setdefault(
         "profit_target_pct",
         (float(supplied.get("profit_target_usd") or 0.0) / initial * 100.0) if initial else 0.0,
