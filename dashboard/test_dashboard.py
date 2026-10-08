@@ -72,6 +72,19 @@ class PropMetricsTests(unittest.TestCase):
         self.assertEqual(payload["profit_target"]["status"], "IN_PROGRESS")
         self.assertEqual(payload["live"]["total_pnl"], 2500.0)
 
+    def test_profit_target_uses_balance_even_when_history_is_not_loaded(self):
+        payload = build_prop_payload(
+            account={"balance": 50500.0, "equity": 52500.0, "profit": 2000.0},
+            deal_list=[],
+            open_positions=[],
+            profile=None,
+            now=datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(payload["profit_target"]["current_pnl"], 500.0)
+        self.assertEqual(payload["profit_target"]["progress_pct"], 20.0)
+        self.assertEqual(payload["profit_target"]["calculation_basis"], "balance_minus_initial")
+        self.assertEqual(payload["live"]["total_pnl"], 2500.0)
+
     def test_moneta_profitable_day_requires_point_five_percent_closed_profit(self):
         base = datetime(2026, 8, 1, 12, 0)
         deals = []
