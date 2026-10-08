@@ -97,6 +97,8 @@ def evaluate_risk(
     day_start_reference: Optional[float] = None,
     open_concurrent_risk_usd: Optional[float] = None,
     open_risk_by_symbol: Optional[Dict[str, float]] = None,
+    current_concurrent_loss_usd: Optional[float] = None,
+    current_loss_by_symbol: Optional[Dict[str, float]] = None,
     proposed_symbol: Optional[str] = None,
     proposed_symbol_risk_usd: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -108,14 +110,26 @@ def evaluate_risk(
     symbol_risk = {
         str(k): float(v) for k, v in (open_risk_by_symbol or {}).items()
     }
+    current_concurrent_loss = float(current_concurrent_loss_usd or 0.0)
+    current_symbol_loss = {
+        str(k): float(v) for k, v in (current_loss_by_symbol or {}).items()
+    }
     proposed_symbol_risk = float(
         proposed_symbol_risk_usd
         if proposed_symbol_risk_usd is not None
         else proposed_risk
     )
-    if min(open_risk, proposed_risk, concurrent_open, proposed_symbol_risk) < 0:
+    if min(
+        open_risk,
+        proposed_risk,
+        concurrent_open,
+        current_concurrent_loss,
+        proposed_symbol_risk,
+    ) < 0:
         raise ValueError("risk exposure cannot be negative")
-    if any(v < 0 for v in symbol_risk.values()):
+    if any(v < 0 for v in symbol_risk.values()) or any(
+        v < 0 for v in current_symbol_loss.values()
+    ):
         raise ValueError("symbol risk exposure cannot be negative")
     if int(unbounded_positions) < 0:
         raise ValueError("unbounded_positions cannot be negative")
@@ -161,9 +175,10 @@ def evaluate_risk(
 
     constraints_cfg = profile.get("risk_constraints") or {}
     aggregate_rule = constraints_cfg.get("aggregate_open_risk") or {}
+    aggregate_open_projection = max(concurrent_open, current_concurrent_loss)
     aggregate = _constraint_view(
-        current_risk=concurrent_open,
-        projected_risk=concurrent_open + proposed_symbol_risk,
+        current_risk=current_concurrent_loss,
+        projected_risk=aggregate_open_projection + proposed_symbol_risk,
         rule=aggregate_rule,
         account=account,
         profile=profile,
@@ -176,12 +191,13 @@ def evaluate_risk(
     per_symbol_rule = constraints_cfg.get("per_symbol_open_risk") or {}
     per_symbol_by_symbol: Dict[str, Dict[str, Any]] = {}
     if per_symbol_rule.get("enabled"):
-        symbols = set(symbol_risk)
+        symbols = set(symbol_risk) | set(current_symbol_loss)
         if proposed_symbol:
             symbols.add(str(proposed_symbol))
         for symbol in sorted(symbols):
-            current = float(symbol_risk.get(symbol, 0.0))
-            projected = current + (
+            current = float(current_symbol_loss.get(symbol, 0.0))
+            planned = max(current, float(symbol_risk.get(symbol, 0.0)))
+            projected = planned + (
                 proposed_symbol_risk if proposed_symbol and symbol == str(proposed_symbol) else 0.0
             )
             per_symbol_by_symbol[symbol] = _constraint_view(
@@ -245,11 +261,15 @@ def evaluate_risk(
     if aggregate.get("available"):
         safe_candidates.append((
             "aggregate_open_risk",
-            max(0.0, float(aggregate["limit_usd"]) - concurrent_open),
+            max(0.0, float(aggregate["limit_usd"]) - aggregate_open_projection),
         ))
 
     if per_symbol.get("available"):
-        current_symbol_risk = float(per_symbol["current_loss_usd"])
+        symbol_code = str(per_symbol.get("symbol") or "")
+        current_symbol_risk = max(
+            float(current_symbol_loss.get(symbol_code, 0.0)),
+            float(symbol_risk.get(symbol_code, 0.0)),
+        )
         safe_candidates.append((
             "per_symbol_open_risk",
             max(0.0, float(per_symbol["limit_usd"]) - current_symbol_risk),
