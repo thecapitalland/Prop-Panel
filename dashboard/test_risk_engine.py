@@ -50,6 +50,11 @@ class RiskEngineTests(unittest.TestCase):
         self.assertEqual(r["safe_additional_risk_usd"], 1750.0)
         self.assertEqual(r["remaining_to_breach_usd"], 2500.0)
 
+    def test_safe_additional_risk_subtracts_existing_open_stop_exposure(self):
+        r = self._evaluate(open_sl_risk_usd=500.0)
+        self.assertEqual(r["safe_additional_risk_usd"], 1250.0)
+        self.assertEqual(r["binding_constraint"]["code"], "daily_drawdown")
+
     def test_personal_stop_can_trigger_before_provider_limit(self):
         r = self._evaluate(
             account={"balance": 50000.0, "equity": 48950.0, "profit": -1050.0},
@@ -99,7 +104,7 @@ class RiskEngineTests(unittest.TestCase):
         self.assertEqual(r["constraints"]["per_symbol"]["status"], "BREACH")
         self.assertEqual(r["provider_status"], "BREACH")
         self.assertEqual(r["binding_constraint"]["code"], "per_symbol_open_risk")
-        self.assertEqual(r["safe_additional_risk_usd"], 150.0)
+        self.assertEqual(r["safe_additional_risk_usd"], 0.0)
 
     def test_sgb_aggregate_constraint_is_separate_from_symbol_constraint(self):
         p = dict(PROFILE)
