@@ -124,7 +124,7 @@
         <!-- Today + trading days + stats -->
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
             <div class="glass rounded-2xl p-4">
-                <div class="text-[11px] text-gray-500 uppercase">Today 0.5% Trading Day</div>
+                <div id="today-day-label" class="text-[11px] text-gray-500 uppercase">Today 0.5% Trading Day</div>
                 <div id="today-status" class="text-sm font-semibold mt-1 text-rose-400">NOT MET</div>
                 <div id="today-val" class="text-lg font-bold mt-1">$0 / $250</div>
                 <div class="bar mt-2"><i id="today-bar" class="bg-cyan-500" style="width:0%"></i></div>
@@ -936,22 +936,39 @@ async function updateDashboard() {
         setStatus(document.getElementById('pt-status'), pt.status);
 
         const td = data.today_trading_day;
-        document.getElementById('today-val').innerText = `${money(td.realized_pnl)} / ${money(td.target_usd)}`;
-        document.getElementById('today-bar').style.width = `${Math.min(100, Math.max(0, td.progress_pct))}%`;
-        document.getElementById('today-status').innerText = td.status.replace('_',' ');
-        document.getElementById('today-status').className = 'text-sm font-semibold mt-1 ' + (td.hit ? 'text-emerald-400' : 'text-rose-400');
+        const todayLabel = document.getElementById('today-day-label');
+        if (td.applicable === false) {
+            todayLabel.innerText = 'Trading Day Rule';
+            document.getElementById('today-val').innerText = 'Not required';
+            document.getElementById('today-bar').style.width = '0%';
+            document.getElementById('today-status').innerText = 'N/A';
+            document.getElementById('today-status').className = 'text-sm font-semibold mt-1 text-gray-400';
+        } else {
+            todayLabel.innerText = 'Today 0.5% Trading Day';
+            document.getElementById('today-val').innerText = `${money(td.realized_pnl)} / ${money(td.target_usd)}`;
+            document.getElementById('today-bar').style.width = `${Math.min(100, Math.max(0, td.progress_pct))}%`;
+            document.getElementById('today-status').innerText = td.status.replaceAll('_',' ');
+            document.getElementById('today-status').className = 'text-sm font-semibold mt-1 ' + (td.hit ? 'text-emerald-400' : 'text-rose-400');
+        }
 
         const days = data.trading_days;
         const counted = days.counted_days ?? days.profitable_days ?? days.qualifying_days ?? 0;
-        document.getElementById('days-val').innerText = `${counted} / ${days.required}`;
-        setStatus(document.getElementById('days-status'), days.target_met ? 'MET' : 'IN_PROGRESS');
-        document.getElementById('days-note').innerText = days.target_met
-            ? `Target Met ✓ · ≥0.5% days: ${days.days_hitting_05pct ?? 0}`
-            : `Profitable days toward min ${days.required} · ≥0.5% days: ${days.days_hitting_05pct ?? 0}`;
+        if (days.applicable === false) {
+            document.getElementById('days-val').innerText = 'N/A';
+            document.getElementById('days-status').innerText = 'N/A';
+            document.getElementById('days-status').className = 'text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400';
+            document.getElementById('days-note').innerText = 'No minimum profitable-day rule in the active provider profile.';
+        } else {
+            document.getElementById('days-val').innerText = `${counted} / ${days.required}`;
+            setStatus(document.getElementById('days-status'), days.target_met ? 'MET' : 'IN_PROGRESS');
+            document.getElementById('days-note').innerText = days.target_met
+                ? `Target Met ✓ · qualifying ≥0.5% days: ${days.days_hitting_05pct ?? 0}`
+                : `Qualifying ≥0.5% days: ${counted} / ${days.required}`;
+        }
         document.getElementById('consistency-note').innerText = `Consistency ${days.consistency_pct}% (cap ${days.consistency_cap_pct}%) · best day ${money(days.best_day_profit)}`;
         const histEl = document.getElementById('history-note');
         if (days.history_start && days.history_end) {
-            histEl.innerText = `MT5 history used: ${days.history_start} → ${days.history_end}. If Moneta portal shows more days, scroll/load Account History in that terminal.`;
+            histEl.innerText = `MT5 history used: ${days.history_start} → ${days.history_end}. If the provider portal shows more history, load/scroll Account History in that terminal.`;
         } else {
             histEl.innerText = '';
         }
