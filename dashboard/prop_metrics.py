@@ -291,10 +291,20 @@ def build_prop_payload(
     day_target = initial * (min_day_pct / 100.0)
     day_rule_applicable = day_target > 0
     trading_days_applicable = min_days > 0
-    day_remaining = max(0.0, day_target - today_realized) if day_rule_applicable else 0.0
-    day_hit = bool(day_rule_applicable and today_realized >= day_target)
+    day_rule_available = bool((not day_rule_applicable) or provider_time_available)
+    trading_days_available = bool((not trading_days_applicable) or provider_time_available)
+    day_remaining = (
+        max(0.0, day_target - today_realized)
+        if day_rule_applicable and day_rule_available
+        else 0.0
+    )
+    day_hit = bool(
+        day_rule_applicable and day_rule_available and today_realized >= day_target
+    )
     day_progress_pct = (
-        today_realized / day_target * 100.0 if day_rule_applicable else 0.0
+        today_realized / day_target * 100.0
+        if day_rule_applicable and day_rule_available
+        else 0.0
     )
     qualifying = [
         d for d, net in daily_nets.items()
@@ -465,6 +475,7 @@ def build_prop_payload(
         },
         "today_trading_day": {
             "applicable": day_rule_applicable,
+            "available": day_rule_available,
             "realized_pnl": round(today_realized, 2),
             "target_usd": round(day_target, 2),
             "remaining_usd": round(day_remaining, 2),
@@ -473,19 +484,26 @@ def build_prop_payload(
             "status": (
                 "NOT_APPLICABLE"
                 if not day_rule_applicable
-                else ("MET" if day_hit else "NOT_MET")
+                else (
+                    "UNAVAILABLE"
+                    if not day_rule_available
+                    else ("MET" if day_hit else "NOT_MET")
+                )
             ),
         },
         "trading_days": {
             "applicable": trading_days_applicable,
-            "counted_days": len(counted_days),
+            "available": trading_days_available,
+            "counted_days": len(counted_days) if trading_days_available else 0,
             "qualifying_days": len(counted_days),
             "days_hitting_05pct": len(qualifying),
             "profitable_days": len(profitable_days),
             "days_with_trades": len(days_with_closes),
             "required": min_days,
             "target_met": (
-                len(counted_days) >= min_days if trading_days_applicable else False
+                len(counted_days) >= min_days
+                if trading_days_applicable and trading_days_available
+                else False
             ),
             "best_day_profit": round(best_day, 2),
             "consistency_pct": round(consistency_pct, 1),
