@@ -66,8 +66,14 @@ _SGB_RISK_CONSTRAINTS = {
         "enabled": True,
         "basis": "current_balance",
         "tiers": [
-            {"max_initial_balance": 50000.0, "limit_pct": 3.0},
-            {"min_initial_balance": 100000.0, "limit_pct": 2.0},
+            {
+                "initial_balances": [1000.0, 2500.0, 5000.0, 10000.0, 25000.0, 50000.0],
+                "limit_pct": 3.0,
+            },
+            {
+                "initial_balances": [100000.0, 200000.0],
+                "limit_pct": 2.0,
+            },
         ],
         "source_type": "public_provider_rule",
         "source_url": "https://sarmayegozarebartar.com/select-the-rules/",
@@ -169,6 +175,9 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
 
 
 def _tier_matches(tier: Dict[str, Any], initial: float) -> bool:
+    exact_values = tier.get("initial_balances")
+    if exact_values is not None:
+        return any(abs(initial - float(v)) < 0.01 for v in exact_values)
     min_value = tier.get("min_initial_balance")
     max_value = tier.get("max_initial_balance")
     if min_value is not None and initial < float(min_value):
