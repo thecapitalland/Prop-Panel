@@ -377,6 +377,23 @@ class FlaskApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertFalse(r.get_json()["ok"])
 
+    def test_bridge_daily_reference_only_used_when_profile_semantics_match(self):
+        from provider_profiles import get_profile
+        moneta = get_profile("moneta_2step_phase1_5_10")
+        sgb = get_profile("sgb_plan_a_phase1")
+        snapshot = {
+            "day_reference": 51000.0,
+            "day_reference_captured": True,
+            "day_reset_utc": 22,
+        }
+        value, quality = self.dash._bridge_day_reference_for_profile(snapshot, moneta)
+        self.assertEqual(value, 51000.0)
+        self.assertEqual(quality, "bridge_captured_reset")
+
+        value, quality = self.dash._bridge_day_reference_for_profile(snapshot, sgb)
+        self.assertIsNone(value)
+        self.assertEqual(quality, "profile_reconstructed")
+
     def test_bridge_reader_fresh_file(self):
         from bridge_reader import load_bridge, account_from_bridge, deals_from_bridge
         import time
