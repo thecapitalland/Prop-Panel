@@ -293,6 +293,7 @@ class FlaskApiTests(unittest.TestCase):
         self.assertIn("Pre-Trade Risk Guard", text)
         self.assertIn("Can I Take This Trade?", text)
         self.assertIn("Advisory only", text)
+        self.assertIn("Max safe volume", text)
 
     @patch("app.get_live_payload")
     def test_api_data_includes_risk_guard(self, mock_live):
@@ -346,6 +347,11 @@ class FlaskApiTests(unittest.TestCase):
         acc.leverage = 100
         mock_mt5.account_info.return_value = acc
         mock_mt5.positions_get.return_value = []
+        symbol_info = MagicMock()
+        symbol_info.volume_min = 0.01
+        symbol_info.volume_max = 100.0
+        symbol_info.volume_step = 0.01
+        mock_mt5.symbol_info.return_value = symbol_info
 
         r = self.client.post("/api/risk/preview", json={
             "symbol": "XAUUSD",
@@ -359,6 +365,9 @@ class FlaskApiTests(unittest.TestCase):
         self.assertTrue(body["advisory_only"])
         self.assertEqual(body["trade"]["risk_usd"], 120.0)
         self.assertIn("risk", body)
+        self.assertIn("sizing", body)
+        self.assertEqual(body["sizing"]["max_safe_volume"], 8.33)
+        self.assertIn("binding_constraint", body["sizing"])
         self.assertNotIn("executed", body)
 
     def test_risk_preview_rejects_bad_trade_input(self):
