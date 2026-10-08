@@ -215,6 +215,16 @@
                     <button id="risk-preview-btn" onclick="previewRisk()" class="rounded-lg bg-emerald-700 hover:bg-emerald-600 px-3 py-2 text-xs font-semibold text-white">Preview risk</button>
                 </div>
                 <div id="risk-preview-result" class="mt-3 text-xs text-gray-400"></div>
+                <div class="grid grid-cols-2 gap-2 mt-3 text-xs font-mono">
+                    <div class="rounded-lg bg-black/20 p-2">
+                        <div class="text-[10px] uppercase text-gray-500">Max safe volume</div>
+                        <div id="risk-max-safe-volume" class="text-emerald-400 font-bold mt-1">—</div>
+                    </div>
+                    <div class="rounded-lg bg-black/20 p-2">
+                        <div class="text-[10px] uppercase text-gray-500">Binding constraint</div>
+                        <div id="risk-binding-rule" class="text-amber-300 font-bold mt-1">—</div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -748,7 +758,7 @@ function renderRiskGuard(r) {
 
     const warnings = [];
     if (r.has_unbounded_risk) {
-        warnings.push(`${r.unbounded_positions} open position(s) have no usable SL. Downside is unbounded, so safe additional risk is not asserted.`);
+        warnings.push(`${r.unbounded_positions} open position(s) have no usable SL. Provider breach status is evaluated separately, but future exposure cannot be asserted safe.`);
     }
     if (r.day_reference_quality === 'reconstructed_balance' || r.day_reference_quality === 'bridge_estimated') {
         warnings.push('Daily reset reference is estimated. Use the provider dashboard as the authoritative breach reference.');
@@ -815,18 +825,34 @@ async function previewRisk() {
         if (!res.ok || !data.ok) {
             out.className = 'mt-3 text-xs text-rose-300';
             out.innerText = data.error || 'Risk preview unavailable';
+            document.getElementById('risk-max-safe-volume').innerText = '—';
+            document.getElementById('risk-binding-rule').innerText = '—';
             return;
         }
         const r = data.risk;
+        const sizing = data.sizing || {};
         out.className = 'mt-3 text-xs text-gray-300';
         const daily = r.daily && r.daily.projected_usage_pct != null ? r.daily.projected_usage_pct.toFixed(2) + '%' : '—';
         const overall = r.overall && r.overall.projected_usage_pct != null ? r.overall.projected_usage_pct.toFixed(2) + '%' : '—';
+        const agg = r.constraints && r.constraints.aggregate && r.constraints.aggregate.available
+            ? r.constraints.aggregate.projected_usage_pct.toFixed(2) + '%' : '—';
+        const sym = r.constraints && r.constraints.per_symbol && r.constraints.per_symbol.available
+            ? r.constraints.per_symbol.projected_usage_pct.toFixed(2) + '%' : '—';
         out.innerHTML =
             `<span class="font-semibold ${r.provider_status==='SAFE'?'text-emerald-400':'text-amber-300'}">${esc(r.provider_status)}</span>` +
+            ` · Exposure <span class="font-mono">${esc(r.exposure_status || '—')}</span>` +
             ` · Proposed risk <span class="font-mono text-white">${money(data.trade.risk_usd)}</span>` +
-            ` · Daily projected <span class="font-mono">${daily}</span>` +
-            ` · Max projected <span class="font-mono">${overall}</span>` +
-            ` · Safe additional <span class="font-mono text-emerald-400">${money(r.safe_additional_risk_usd)}</span>`;
+            ` · Daily <span class="font-mono">${daily}</span>` +
+            ` · Max <span class="font-mono">${overall}</span>` +
+            ` · Aggregate <span class="font-mono">${agg}</span>` +
+            ` · Symbol <span class="font-mono">${sym}</span>`;
+        document.getElementById('risk-max-safe-volume').innerText =
+            sizing.available && sizing.max_safe_volume != null
+                ? Number(sizing.max_safe_volume).toFixed(2) + ' lot'
+                : 'Unavailable';
+        const binding = sizing.binding_constraint || {};
+        document.getElementById('risk-binding-rule').innerText =
+            (binding.code || '—') + (sizing.execution_buffer_pct ? ` · buffer ${sizing.execution_buffer_pct}%` : '');
     } catch (e) {
         out.className = 'mt-3 text-xs text-rose-300';
         out.innerText = String(e);
