@@ -37,6 +37,12 @@ class ProviderProfileTests(unittest.TestCase):
         self.assertEqual(a["daily_loss_limit_pct"], 5.0)
         self.assertEqual(a["max_loss_limit_pct"], 12.0)
 
+    def test_sgb_daily_reset_uses_broker_server_midnight_not_utc(self):
+        p = self._module().get_profile("sgb_plan_a_phase1")
+        self.assertEqual(p["daily_loss"]["reset_basis"], "broker_server")
+        self.assertEqual(p["daily_loss"]["reset_hour_server"], 0)
+        self.assertIsNone(p["daily_loss"]["reset_hour_utc"])
+
     def test_sgb_risk_constraints_include_aggregate_and_per_symbol(self):
         m = self._module()
         p50 = m.normalize_profile(profile={"initial_balance": 50000.0}, profile_id="sgb_plan_a_phase1")
