@@ -222,9 +222,13 @@ def build_prop_payload(
         profit_progress_pct = 0.0
 
     day_target = initial * (min_day_pct / 100.0)
-    day_remaining = max(0.0, day_target - today_realized)
-    day_hit = today_realized >= day_target > 0
-    day_progress_pct = (today_realized / day_target * 100.0) if day_target > 0 else 0.0
+    day_rule_applicable = day_target > 0
+    trading_days_applicable = min_days > 0
+    day_remaining = max(0.0, day_target - today_realized) if day_rule_applicable else 0.0
+    day_hit = bool(day_rule_applicable and today_realized >= day_target)
+    day_progress_pct = (
+        today_realized / day_target * 100.0 if day_rule_applicable else 0.0
+    )
     qualifying = [
         d for d, net in daily_nets.items()
         if (net >= day_target if day_target > 0 else net > 0)
@@ -374,21 +378,29 @@ def build_prop_payload(
             "status": "MET" if realized_target_pnl >= pt else "IN_PROGRESS",
         },
         "today_trading_day": {
+            "applicable": day_rule_applicable,
             "realized_pnl": round(today_realized, 2),
             "target_usd": round(day_target, 2),
             "remaining_usd": round(day_remaining, 2),
             "progress_pct": round(min(100.0, max(0.0, day_progress_pct)), 2),
             "hit": day_hit,
-            "status": "MET" if day_hit else "NOT_MET",
+            "status": (
+                "NOT_APPLICABLE"
+                if not day_rule_applicable
+                else ("MET" if day_hit else "NOT_MET")
+            ),
         },
         "trading_days": {
+            "applicable": trading_days_applicable,
             "counted_days": len(counted_days),
             "qualifying_days": len(counted_days),
             "days_hitting_05pct": len(qualifying),
             "profitable_days": len(profitable_days),
             "days_with_trades": len(days_with_closes),
             "required": min_days,
-            "target_met": len(counted_days) >= min_days,
+            "target_met": (
+                len(counted_days) >= min_days if trading_days_applicable else False
+            ),
             "best_day_profit": round(best_day, 2),
             "consistency_pct": round(consistency_pct, 1),
             "consistency_cap_pct": cons_cap,
