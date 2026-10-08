@@ -328,6 +328,9 @@ def _risk_guard_payload(
             "reason": "Open-position SL exposure needs MT5 contract calculation; use preview or MT5 API fallback.",
         }
     try:
+        risk_profile = copy.deepcopy(profile)
+        if not bool((payload.get("daily_drawdown") or {}).get("available", True)):
+            risk_profile["daily_loss_limit_usd"] = 0.0
         exposure = (
             aggregate_open_sl_exposure(
                 positions,
@@ -347,7 +350,7 @@ def _risk_guard_payload(
         )
         risk = evaluate_risk(
             account=payload.get("account") or {},
-            profile=profile,
+            profile=risk_profile,
             open_sl_risk_usd=float(exposure["known_risk_usd"]),
             proposed_trade_risk_usd=0.0,
             unbounded_positions=int(exposure["unbounded_positions"]),
@@ -372,6 +375,20 @@ def _risk_guard_payload(
             "provider": profile.get("provider"),
             "reason": str(exc),
         }
+
+
+def _server_utc_offset_from_bridge(raw: Dict[str, Any]) -> Optional[int]:
+    """Return broker-server offset from the bridge's same-snapshot clocks."""
+    try:
+        server_time = int(raw.get("server_time"))
+        utc_time = int(raw.get("ts"))
+    except (TypeError, ValueError):
+        return None
+    offset = server_time - utc_time
+    # Reject implausible clock deltas rather than poisoning provider-day bucketing.
+    if abs(offset) > 15 * 3600:
+        return None
+    return offset
 
 
 def _bridge_day_reference_for_profile(
@@ -478,6 +495,7 @@ def get_live_payload() -> Dict[str, Any]:
             bridge_day_ref, bridge_day_quality = _bridge_day_reference_for_profile(
                 prop_snapshot, profile
             )
+            server_utc_offset_seconds = _server_utc_offset_from_bridge(raw)
             payload = build_prop_payload(
                 account=account,
                 deal_list=deals,
@@ -487,6 +505,7 @@ def get_live_payload() -> Dict[str, Any]:
                 terminal=term_meta,
                 day_start_reference=bridge_day_ref,
                 day_reference_quality=bridge_day_quality,
+                server_utc_offset_seconds=server_utc_offset_seconds,
             )
             payload["ok"] = True
             payload["terminals"] = list_terminals(cfg)
@@ -629,6 +648,7 @@ def get_live_payload() -> Dict[str, Any]:
             "path": path,
             "active": True,
         },
+        server_utc_offset_seconds=term.get("server_utc_offset_seconds"),
     )
     payload["ok"] = True
     payload["terminals"] = list_terminals(cfg)
@@ -809,9 +829,13 @@ def api_risk_preview():
             (live.get("daily_drawdown") or {}).get("starting_balance") or 0.0
         )
 
+        preview_profile = copy.deepcopy(profile)
+        if not bool((live.get("daily_drawdown") or {}).get("available", True)):
+            preview_profile["daily_loss_limit_usd"] = 0.0
+
         base_risk = evaluate_risk(
             account=fresh_account,
-            profile=profile,
+            profile=preview_profile,
             open_sl_risk_usd=float(exposure["known_risk_usd"]),
             proposed_trade_risk_usd=0.0,
             unbounded_positions=int(exposure["unbounded_positions"]),
@@ -826,7 +850,7 @@ def api_risk_preview():
         )
         risk = evaluate_risk(
             account=fresh_account,
-            profile=profile,
+            profile=preview_profile,
             open_sl_risk_usd=float(exposure["known_risk_usd"]),
             proposed_trade_risk_usd=float(trade["risk_usd"]),
             unbounded_positions=int(exposure["unbounded_positions"]),
