@@ -49,6 +49,7 @@ def next_reset_countdown(
     reset_hour_utc: Optional[int] = None,
     reset_basis: Optional[str] = None,
     server_utc_offset_seconds: Optional[int] = None,
+    deal_times_are_utc: bool = True,
 ) -> Dict[str, Any]:
     """Seconds until next provider reset."""
     basis = reset_basis or ("utc" if reset_hour_utc is not None else "server_local")
@@ -205,7 +206,7 @@ def build_prop_payload(
     if reset_hour_utc is not None:
         reset_hour_utc = int(reset_hour_utc)
     reset_basis = str(daily_rule.get("reset_basis") or ("utc" if reset_hour_utc is not None else "server_local"))
-    broker_time_available = not (
+    provider_time_available = bool(deal_times_are_utc) and not (
         reset_basis == "broker_server" and server_utc_offset_seconds is None
     )
     cons_cap = float(profile["consistency_cap_pct"])
@@ -230,9 +231,9 @@ def build_prop_payload(
             continue
         pnl = float(d.get("profit", 0) + d.get("swap", 0) + d.get("commission", 0))
         realized_trading_pnl += pnl
-        if broker_time_available:
+        if provider_time_available:
             b = day_bucket(
-                int(d["time"]),
+                int(d.get("time_utc", d["time"])),
                 reset_hour,
                 reset_hour_utc=reset_hour_utc,
                 reset_basis=reset_basis,
@@ -240,7 +241,7 @@ def build_prop_payload(
             )
             daily_nets[b] = daily_nets.get(b, 0.0) + pnl
 
-    if broker_time_available:
+    if provider_time_available:
         now_for_bucket = (
             now.replace(tzinfo=timezone.utc)
             if now.tzinfo is None and reset_basis in ("utc", "broker_server")
@@ -263,11 +264,11 @@ def build_prop_payload(
     explicit_day_reference = (
         day_start_reference is not None and float(day_start_reference) > 0
     )
-    daily_available = bool(explicit_day_reference or broker_time_available)
+    daily_available = bool(explicit_day_reference or provider_time_available)
     day_start_balance = (
         float(day_start_reference)
         if explicit_day_reference
-        else (balance - today_realized if broker_time_available else balance)
+        else (balance - today_realized if provider_time_available else balance)
     )
     current_daily_loss = (
         max(0.0, day_start_balance - equity) if daily_available else 0.0
@@ -302,11 +303,18 @@ def build_prop_payload(
     profitable_days = [d for d, net in daily_nets.items() if net > 0]
     counted_days = qualifying if min_day_pct > 0 else profitable_days
     days_with_closes = set()
-    for d in deal_list:
-        if d.get("symbol") and int(d.get("entry", -1)) in (1, 2):
-            days_with_closes.add(
-                day_bucket(int(d["time"]), reset_hour, reset_hour_utc=reset_hour_utc)
-            )
+    if provider_time_available:
+        for d in deal_list:
+            if d.get("symbol") and int(d.get("entry", -1)) in (1, 2):
+                days_with_closes.add(
+                    day_bucket(
+                        int(d.get("time_utc", d["time"])),
+                        reset_hour,
+                        reset_hour_utc=reset_hour_utc,
+                        reset_basis=reset_basis,
+                        server_utc_offset_seconds=server_utc_offset_seconds,
+                    )
+                )
     best_day = max(daily_nets.values()) if daily_nets else 0.0
     gross_profit_days = sum(v for v in daily_nets.values() if v > 0)
     consistency_pct = (best_day / gross_profit_days * 100.0) if gross_profit_days > 0 else 0.0
@@ -418,8 +426,12 @@ def build_prop_payload(
                 if explicit_day_reference
                 else (
                     "reconstructed_balance"
-                    if broker_time_available
-                    else "broker_offset_unavailable"
+                    if provider_time_available
+                    else (
+                        "broker_offset_unavailable"
+                        if reset_basis == "broker_server"
+                        else "deal_time_basis_unavailable"
+                    )
                 )
             ),
             "current_daily_loss": round(current_daily_loss, 2) if daily_available else None,
