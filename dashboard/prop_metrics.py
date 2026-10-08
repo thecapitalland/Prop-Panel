@@ -283,7 +283,7 @@ def build_prop_payload(
     overall_used_pct = (current_overall_loss / max_lim * 100.0) if max_lim > 0 else 0.0
 
     total_pnl = equity - initial
-    realized_target_pnl = realized_trading_pnl
+    realized_target_pnl = balance - initial
     profit_progress_pct = (realized_target_pnl / pt * 100.0) if pt > 0 else 0.0
     if realized_target_pnl < 0:
         profit_progress_pct = 0.0
@@ -468,6 +468,7 @@ def build_prop_payload(
             "target_usd": pt,
             "current_pnl": round(max(0.0, realized_target_pnl), 2),
             "realized_pnl": round(realized_target_pnl, 2),
+            "calculation_basis": "balance_minus_initial",
             "floating_excluded_usd": round(floating, 2),
             "remaining_usd": round(max(0.0, pt - max(0.0, realized_target_pnl)), 2),
             "progress_pct": round(min(100.0, max(0.0, profit_progress_pct)), 2),
