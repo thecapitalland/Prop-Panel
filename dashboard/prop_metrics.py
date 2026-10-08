@@ -18,15 +18,25 @@ def _status(used_pct: float, warn_at: float = 60.0, breach_at: float = 100.0) ->
     return "SAFE"
 
 
-def day_bucket(ts: int, reset_hour: int, reset_hour_utc: Optional[int] = None) -> int:
-    """Trading-day id using provider reset semantics.
-
-    When reset_hour_utc is configured, epoch timestamps are bucketed in UTC so
-    laptop/server timezone cannot move a deal into the wrong provider day.
-    """
-    if reset_hour_utc is not None:
+def day_bucket(
+    ts: int,
+    reset_hour: int,
+    reset_hour_utc: Optional[int] = None,
+    reset_basis: Optional[str] = None,
+    server_utc_offset_seconds: Optional[int] = None,
+) -> int:
+    """Trading-day id using provider reset semantics."""
+    basis = reset_basis or ("utc" if reset_hour_utc is not None else "server_local")
+    if basis == "broker_server":
+        if server_utc_offset_seconds is None:
+            raise ValueError("broker server UTC offset required for trading-day bucket")
+        dt = datetime.fromtimestamp(int(ts), tz=timezone.utc) + timedelta(
+            seconds=int(server_utc_offset_seconds)
+        )
+        shifted = dt - timedelta(hours=int(reset_hour))
+    elif basis == "utc" or reset_hour_utc is not None:
         dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
-        shifted = dt - timedelta(hours=int(reset_hour_utc))
+        shifted = dt - timedelta(hours=int(reset_hour_utc or 0))
     else:
         dt = datetime.fromtimestamp(int(ts))
         shifted = dt - timedelta(hours=int(reset_hour))
@@ -37,17 +47,42 @@ def next_reset_countdown(
     now: datetime,
     reset_hour: int,
     reset_hour_utc: Optional[int] = None,
+    reset_basis: Optional[str] = None,
+    server_utc_offset_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Seconds until next provider reset."""
-    if reset_hour_utc is not None:
+    basis = reset_basis or ("utc" if reset_hour_utc is not None else "server_local")
+    if basis == "broker_server":
+        if server_utc_offset_seconds is None:
+            return {
+                "available": False,
+                "seconds_remaining": None,
+                "hh": None,
+                "mm": None,
+                "ss": None,
+                "label": "--:--:--",
+                "reset_hour": int(reset_hour),
+                "reset_timezone": "broker_server",
+                "next_reset_iso": None,
+            }
+        current_utc = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+        current = current_utc.astimezone(timezone.utc) + timedelta(
+            seconds=int(server_utc_offset_seconds)
+        )
+        target = current.replace(hour=int(reset_hour), minute=0, second=0, microsecond=0)
+        if current >= target:
+            target = target + timedelta(days=1)
+        reset_label = int(reset_hour)
+        reset_timezone = "broker_server"
+    elif basis == "utc" or reset_hour_utc is not None:
         current = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
         current = current.astimezone(timezone.utc)
         target = current.replace(
-            hour=int(reset_hour_utc), minute=0, second=0, microsecond=0
+            hour=int(reset_hour_utc or 0), minute=0, second=0, microsecond=0
         )
         if current >= target:
             target = target + timedelta(days=1)
-        reset_label = int(reset_hour_utc)
+        reset_label = int(reset_hour_utc or 0)
         reset_timezone = "UTC"
     else:
         current = now.replace(tzinfo=None) if now.tzinfo else now
@@ -60,6 +95,7 @@ def next_reset_countdown(
     h, rem = divmod(max(0, remaining), 3600)
     m, s = divmod(rem, 60)
     return {
+        "available": True,
         "seconds_remaining": remaining,
         "hh": h,
         "mm": m,
@@ -152,6 +188,7 @@ def build_prop_payload(
     terminal: Optional[Dict[str, Any]] = None,
     day_start_reference: Optional[float] = None,
     day_reference_quality: str = "reconstructed_balance",
+    server_utc_offset_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Assemble full dashboard JSON from account + deals (no MT5 calls)."""
     profile = normalize_profile(profile=profile)
@@ -163,9 +200,14 @@ def build_prop_payload(
     min_days = int(profile["min_trading_days"])
     min_day_pct = float(profile["min_day_profit_pct"])
     reset_hour = int(profile["day_reset_hour_server"])
-    reset_hour_utc = (profile.get("daily_loss") or {}).get("reset_hour_utc")
+    daily_rule = profile.get("daily_loss") or {}
+    reset_hour_utc = daily_rule.get("reset_hour_utc")
     if reset_hour_utc is not None:
         reset_hour_utc = int(reset_hour_utc)
+    reset_basis = str(daily_rule.get("reset_basis") or ("utc" if reset_hour_utc is not None else "server_local"))
+    broker_time_available = not (
+        reset_basis == "broker_server" and server_utc_offset_seconds is None
+    )
     cons_cap = float(profile["consistency_cap_pct"])
 
     balance = float(account.get("balance", 0.0))
@@ -188,29 +230,53 @@ def build_prop_payload(
             continue
         pnl = float(d.get("profit", 0) + d.get("swap", 0) + d.get("commission", 0))
         realized_trading_pnl += pnl
-        b = day_bucket(int(d["time"]), reset_hour, reset_hour_utc=reset_hour_utc)
-        daily_nets[b] = daily_nets.get(b, 0.0) + pnl
+        if broker_time_available:
+            b = day_bucket(
+                int(d["time"]),
+                reset_hour,
+                reset_hour_utc=reset_hour_utc,
+                reset_basis=reset_basis,
+                server_utc_offset_seconds=server_utc_offset_seconds,
+            )
+            daily_nets[b] = daily_nets.get(b, 0.0) + pnl
 
-    if now.tzinfo is None and reset_hour_utc is not None:
-        now_for_bucket = now.replace(tzinfo=timezone.utc)
+    if broker_time_available:
+        now_for_bucket = (
+            now.replace(tzinfo=timezone.utc)
+            if now.tzinfo is None and reset_basis in ("utc", "broker_server")
+            else now
+        )
+        today_bucket = day_bucket(
+            int(now_for_bucket.timestamp()),
+            reset_hour,
+            reset_hour_utc=reset_hour_utc,
+            reset_basis=reset_basis,
+            server_utc_offset_seconds=server_utc_offset_seconds,
+        )
+        today_realized = float(daily_nets.get(today_bucket, 0.0))
     else:
-        now_for_bucket = now
-    today_bucket = day_bucket(
-        int(now_for_bucket.timestamp()),
-        reset_hour,
-        reset_hour_utc=reset_hour_utc,
-    )
-    today_realized = float(daily_nets.get(today_bucket, 0.0))
+        today_bucket = None
+        today_realized = 0.0
 
     # Prefer an explicit provider reset reference when a live bridge captured it.
     # Otherwise reconstruct from balance and today's realized P/L (approximate).
+    explicit_day_reference = (
+        day_start_reference is not None and float(day_start_reference) > 0
+    )
+    daily_available = bool(explicit_day_reference or broker_time_available)
     day_start_balance = (
         float(day_start_reference)
-        if day_start_reference is not None and float(day_start_reference) > 0
-        else balance - today_realized
+        if explicit_day_reference
+        else (balance - today_realized if broker_time_available else balance)
     )
-    current_daily_loss = max(0.0, day_start_balance - equity)
-    daily_used_pct = (current_daily_loss / daily_lim * 100.0) if daily_lim > 0 else 0.0
+    current_daily_loss = (
+        max(0.0, day_start_balance - equity) if daily_available else 0.0
+    )
+    daily_used_pct = (
+        current_daily_loss / daily_lim * 100.0
+        if daily_available and daily_lim > 0
+        else 0.0
+    )
 
     current_overall_loss = max(0.0, initial - equity)
     overall_used_pct = (current_overall_loss / max_lim * 100.0) if max_lim > 0 else 0.0
@@ -345,19 +411,27 @@ def build_prop_payload(
             "lowest_equity": round(lowest_equity, 2),
         },
         "daily_drawdown": {
-            "starting_balance": round(day_start_balance, 2),
+            "available": daily_available,
+            "starting_balance": round(day_start_balance, 2) if daily_available else None,
             "reference_quality": (
                 day_reference_quality
-                if day_start_reference is not None and float(day_start_reference) > 0
-                else "reconstructed_balance"
+                if explicit_day_reference
+                else (
+                    "reconstructed_balance"
+                    if broker_time_available
+                    else "broker_offset_unavailable"
+                )
             ),
-            "current_daily_loss": round(current_daily_loss, 2),
-            "daily_drawdown_pct": round((current_daily_loss / day_start_balance * 100.0) if day_start_balance else 0.0, 2),
+            "current_daily_loss": round(current_daily_loss, 2) if daily_available else None,
+            "daily_drawdown_pct": (
+                round((current_daily_loss / day_start_balance * 100.0) if day_start_balance else 0.0, 2)
+                if daily_available else None
+            ),
             "limit_usd": daily_lim,
-            "used_of_limit_pct": round(daily_used_pct, 2),
+            "used_of_limit_pct": round(daily_used_pct, 2) if daily_available else None,
             "max_daily_loss_pct": round((daily_lim / initial * 100.0) if initial else 0.0, 2),
             "max_daily_loss_usd": daily_lim,
-            "status": _status(daily_used_pct),
+            "status": _status(daily_used_pct) if daily_available else "UNAVAILABLE",
         },
         "overall_drawdown": {
             "initial_balance": initial,
@@ -421,13 +495,17 @@ def build_prop_payload(
             now,
             reset_hour,
             reset_hour_utc=reset_hour_utc,
+            reset_basis=reset_basis,
+            server_utc_offset_seconds=server_utc_offset_seconds,
         ),
         "chart": {
             "equity_curve": curve[-200:],
             "lines": {
                 "profit_target_level": round(initial + pt, 2),
                 "max_loss_floor": round(initial - max_lim, 2),
-                "daily_loss_floor_today": round(day_start_balance - daily_lim, 2),
+                "daily_loss_floor_today": (
+                    round(day_start_balance - daily_lim, 2) if daily_available else None
+                ),
                 "initial_balance": initial,
             },
         },
