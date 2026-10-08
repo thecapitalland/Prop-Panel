@@ -49,6 +49,12 @@ class ProviderProfileTests(unittest.TestCase):
             "user_supplied_account_rule",
         )
 
+    def test_sgb_unsupported_account_size_fails_constraint_closed(self):
+        m = self._module()
+        p = m.normalize_profile(profile={"initial_balance": 75000.0}, profile_id="sgb_plan_a_phase1")
+        self.assertFalse(p["risk_constraints"]["aggregate_open_risk"]["enabled"])
+        self.assertIn("unavailable_reason", p["risk_constraints"]["aggregate_open_risk"])
+
     def test_sgb_symbol_normalization_strips_dot_x_suffix(self):
         m = self._module()
         p = m.get_profile("sgb_plan_a_phase1")
