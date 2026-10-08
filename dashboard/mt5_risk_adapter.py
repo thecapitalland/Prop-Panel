@@ -107,22 +107,27 @@ def aggregate_open_sl_exposure(
     entry_risk = sum(
         float(i["entry_risk_usd"] or 0.0) for i in items if not i["unbounded"]
     )
-    current_loss = sum(float(i["current_loss_usd"] or 0.0) for i in items)
+    current_net_pnl = sum(float(p.get("profit") or 0.0) for p in positions)
+    current_loss = max(0.0, -current_net_pnl)
     unbounded = sum(1 for i in items if i["unbounded"])
 
     risk_by_symbol: Dict[str, float] = {}
-    current_loss_by_symbol: Dict[str, float] = {}
-    for item in items:
+    current_pnl_by_symbol: Dict[str, float] = {}
+    for position, item in zip(positions, items):
         group = str(item["symbol_group"])
-        current_loss_by_symbol[group] = (
-            current_loss_by_symbol.get(group, 0.0)
-            + float(item["current_loss_usd"] or 0.0)
+        current_pnl_by_symbol[group] = (
+            current_pnl_by_symbol.get(group, 0.0)
+            + float(position.get("profit") or 0.0)
         )
         if not item["unbounded"]:
             risk_by_symbol[group] = (
                 risk_by_symbol.get(group, 0.0)
                 + float(item["entry_risk_usd"] or 0.0)
             )
+    current_loss_by_symbol = {
+        group: max(0.0, -pnl)
+        for group, pnl in current_pnl_by_symbol.items()
+    }
 
     return {
         "known_risk_usd": round(known_remaining, 2),
