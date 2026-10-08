@@ -255,24 +255,23 @@ def evaluate_risk(
     for code, view in (("daily_drawdown", daily), ("max_drawdown", overall)):
         if view["available"]:
             warning_limit = float(view["limit_usd"]) * warning / 100.0
-            room = max(0.0, warning_limit - float(view["current_loss_usd"]))
+            room = max(0.0, warning_limit - float(view["projected_loss_usd"]))
             safe_candidates.append((code, room))
 
     if aggregate.get("available"):
         safe_candidates.append((
             "aggregate_open_risk",
-            max(0.0, float(aggregate["limit_usd"]) - aggregate_open_projection),
+            max(0.0, float(aggregate["limit_usd"]) - float(aggregate["projected_loss_usd"])),
         ))
 
     if per_symbol.get("available"):
-        symbol_code = str(per_symbol.get("symbol") or "")
-        current_symbol_risk = max(
-            float(current_symbol_loss.get(symbol_code, 0.0)),
-            float(symbol_risk.get(symbol_code, 0.0)),
-        )
         safe_candidates.append((
             "per_symbol_open_risk",
-            max(0.0, float(per_symbol["limit_usd"]) - current_symbol_risk),
+            max(
+                0.0,
+                float(per_symbol["limit_usd"])
+                - float(per_symbol["projected_loss_usd"]),
+            ),
         ))
 
     personal_status = "NOT_CONFIGURED"
@@ -283,7 +282,7 @@ def evaluate_risk(
         personal_status = "STOP" if projected_daily_loss >= personal_limit else "OK"
         safe_candidates.append((
             "personal_daily_stop",
-            max(0.0, personal_limit - current_daily_loss),
+            max(0.0, personal_limit - projected_daily_loss),
         ))
 
     if safe_candidates:
