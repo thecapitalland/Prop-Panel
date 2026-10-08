@@ -62,7 +62,7 @@ The preview reports:
 
 Provider compliance and exposure certainty are separate. A position without a usable stop loss is **never counted as zero risk**: current rule status can still be evaluated from live loss, while future exposure is marked `UNBOUNDED_RISK` / `CANNOT_ASSERT_SAFE`.
 
-The Risk Guard does **not** send, modify, block, or cancel trades.
+The Risk Guard does **not** send, modify, block, or cancel trades. If the provider-day time basis cannot be established safely, the affected Daily DD calculation is reported as unavailable instead of silently using the workstation timezone.
 
 ## Multi-provider rule profiles
 
@@ -76,7 +76,7 @@ Initial profiles include:
 - SGB Plan B Phase I
 - Custom
 
-Provider-aware time boundaries are used for challenge-day metrics. Moneta 2-Step uses the documented 22:00 UTC reset; SGB uses broker-day midnight (00:00 broker time, represented as UTC in the current SGB server rule profile).
+Provider-aware time boundaries are used for challenge-day metrics. Moneta 2-Step uses the documented 22:00 UTC reset. SGB uses **00:00 broker-server time**; it is not assumed to be UTC. The EA bridge derives the broker/UTC offset from the same snapshot clocks. MT5 Python fallback requires `server_utc_offset_seconds` in the local terminal config when provider-day calculations depend on broker/server time.
 
 For Moneta, Profit Target progress uses realized trading P/L only; floating/open-position P/L is excluded. Minimum Profitable Days count only days meeting the configured 0.5% closed-profit threshold.
 
