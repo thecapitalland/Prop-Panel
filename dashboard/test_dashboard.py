@@ -101,6 +101,19 @@ class PropMetricsTests(unittest.TestCase):
             day_bucket(after, 0, reset_hour_utc=22),
         )
 
+    def test_profile_without_profitable_day_rule_reports_not_applicable(self):
+        from provider_profiles import get_profile
+        payload = build_prop_payload(
+            account={"balance": 50000.0, "equity": 50000.0, "profit": 0.0},
+            deal_list=[],
+            open_positions=[],
+            profile=get_profile("sgb_plan_a_phase1"),
+            now=datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        self.assertFalse(payload["today_trading_day"]["applicable"])
+        self.assertEqual(payload["today_trading_day"]["status"], "NOT_APPLICABLE")
+        self.assertFalse(payload["trading_days"]["applicable"])
+
     def test_countdown_format(self):
         now = datetime(2026, 8, 4, 12, 0, 0)
         c = next_reset_countdown(now, reset_hour=0)
