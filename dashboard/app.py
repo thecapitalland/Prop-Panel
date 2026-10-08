@@ -358,7 +358,11 @@ def _risk_guard_payload(
             day_start_reference=float((payload.get("daily_drawdown") or {}).get("starting_balance") or 0.0),
             open_concurrent_risk_usd=float(exposure.get("entry_risk_usd") or 0.0),
             open_risk_by_symbol=exposure.get("risk_by_symbol") or {},
-            current_concurrent_loss_usd=float(exposure.get("current_loss_usd") or 0.0),
+            current_concurrent_loss_usd=max(
+                0.0,
+                float((payload.get("account") or {}).get("balance") or 0.0)
+                - float((payload.get("account") or {}).get("equity") or 0.0),
+            ),
             current_loss_by_symbol=exposure.get("current_loss_by_symbol") or {},
         )
         return {
@@ -870,7 +874,11 @@ def api_risk_preview():
             day_start_reference=day_reference,
             open_concurrent_risk_usd=float(exposure.get("entry_risk_usd") or 0.0),
             open_risk_by_symbol=exposure.get("risk_by_symbol") or {},
-            current_concurrent_loss_usd=float(exposure.get("current_loss_usd") or 0.0),
+            current_concurrent_loss_usd=max(
+                0.0,
+                float(fresh_account.get("balance") or 0.0)
+                - float(fresh_account.get("equity") or 0.0),
+            ),
             current_loss_by_symbol=exposure.get("current_loss_by_symbol") or {},
             proposed_symbol=symbol_group,
             proposed_symbol_risk_usd=0.0,
@@ -885,7 +893,11 @@ def api_risk_preview():
             day_start_reference=day_reference,
             open_concurrent_risk_usd=float(exposure.get("entry_risk_usd") or 0.0),
             open_risk_by_symbol=exposure.get("risk_by_symbol") or {},
-            current_concurrent_loss_usd=float(exposure.get("current_loss_usd") or 0.0),
+            current_concurrent_loss_usd=max(
+                0.0,
+                float(fresh_account.get("balance") or 0.0)
+                - float(fresh_account.get("equity") or 0.0),
+            ),
             current_loss_by_symbol=exposure.get("current_loss_by_symbol") or {},
             proposed_symbol=symbol_group,
             proposed_symbol_risk_usd=float(trade["risk_usd"]),
