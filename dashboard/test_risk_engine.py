@@ -103,7 +103,7 @@ class RiskEngineTests(unittest.TestCase):
         )
         self.assertEqual(r["constraints"]["per_symbol"]["status"], "BREACH")
         self.assertEqual(r["provider_status"], "BREACH")
-        self.assertEqual(r["binding_constraint"]["code"], "per_symbol_open_risk")
+        self.assertEqual(r["binding_constraint"]["code"], "existing_provider_breach")
         self.assertEqual(r["safe_additional_risk_usd"], 0.0)
 
     def test_existing_other_symbol_breach_forces_zero_safe_budget(self):
