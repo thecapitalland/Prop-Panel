@@ -411,6 +411,13 @@ class FlaskApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertFalse(r.get_json()["ok"])
 
+    def test_server_time_deals_get_separate_utc_metric_timestamp(self):
+        deals = [{"time": 10800, "time_msc": 10800000, "symbol": "XAUUSD"}]
+        out = self.dash._attach_utc_deal_times(deals, 10800)
+        self.assertEqual(out[0]["time"], 10800)
+        self.assertEqual(out[0]["time_utc"], 0)
+        self.assertEqual(out[0]["time_msc_utc"], 0)
+
     def test_bridge_daily_reference_only_used_when_profile_semantics_match(self):
         from provider_profiles import get_profile
         moneta = get_profile("moneta_2step_phase1_5_10")
