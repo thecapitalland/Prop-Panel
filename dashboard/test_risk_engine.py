@@ -106,6 +106,23 @@ class RiskEngineTests(unittest.TestCase):
         self.assertEqual(r["binding_constraint"]["code"], "per_symbol_open_risk")
         self.assertEqual(r["safe_additional_risk_usd"], 0.0)
 
+    def test_existing_other_symbol_breach_forces_zero_safe_budget(self):
+        p = dict(PROFILE)
+        p["risk_constraints"] = {
+            "aggregate_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 3.0},
+            "per_symbol_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 2.0},
+        }
+        r = self._evaluate(
+            profile=p,
+            open_concurrent_risk_usd=1200.0,
+            open_risk_by_symbol={"EURUSD": 1100.0, "XAUUSD": 100.0},
+            proposed_symbol="XAUUSD",
+            proposed_symbol_risk_usd=0.0,
+        )
+        self.assertEqual(r["provider_status"], "BREACH")
+        self.assertEqual(r["safe_additional_risk_usd"], 0.0)
+        self.assertEqual(r["binding_constraint"]["code"], "existing_provider_breach")
+
     def test_sgb_aggregate_constraint_is_separate_from_symbol_constraint(self):
         p = dict(PROFILE)
         p["risk_constraints"] = {
