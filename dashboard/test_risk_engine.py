@@ -66,6 +66,23 @@ class RiskEngineTests(unittest.TestCase):
         self.assertEqual(r["recommendation_status"], "CANNOT_ASSERT_SAFE")
         self.assertEqual(r["safe_additional_risk_usd"], 0.0)
 
+    def test_unbounded_position_can_still_be_current_provider_breach(self):
+        p = dict(PROFILE)
+        p["risk_constraints"] = {
+            "aggregate_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 3.0},
+            "per_symbol_open_risk": {"enabled": True, "basis": "current_balance", "limit_pct": 2.0},
+        }
+        r = self._evaluate(
+            profile=p,
+            unbounded_positions=1,
+            current_concurrent_loss_usd=1100.0,
+            current_loss_by_symbol={"XAUUSD": 1100.0},
+            proposed_symbol="XAUUSD",
+        )
+        self.assertEqual(r["provider_status"], "BREACH")
+        self.assertEqual(r["exposure_status"], "UNBOUNDED_RISK")
+        self.assertEqual(r["recommendation_status"], "CANNOT_ASSERT_SAFE")
+
     def test_sgb_per_symbol_constraint_can_be_binding(self):
         p = dict(PROFILE)
         p["risk_constraints"] = {
