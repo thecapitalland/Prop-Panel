@@ -377,6 +377,25 @@ def _risk_guard_payload(
         }
 
 
+def _attach_utc_deal_times(
+    deals: List[Dict[str, Any]],
+    server_utc_offset_seconds: Optional[int],
+) -> List[Dict[str, Any]]:
+    """Keep MT5 server timestamps and attach normalized UTC copies for rule math."""
+    if server_utc_offset_seconds is None:
+        return [dict(d) for d in deals]
+    offset = int(server_utc_offset_seconds)
+    out: List[Dict[str, Any]] = []
+    for deal in deals:
+        item = dict(deal)
+        if item.get("time") is not None:
+            item["time_utc"] = int(item["time"]) - offset
+        if item.get("time_msc") is not None:
+            item["time_msc_utc"] = int(item["time_msc"]) - offset * 1000
+        out.append(item)
+    return out
+
+
 def _server_utc_offset_from_bridge(raw: Dict[str, Any]) -> Optional[int]:
     """Return broker-server offset from the bridge's same-snapshot clocks."""
     try:
@@ -483,7 +502,7 @@ def get_live_payload() -> Dict[str, Any]:
                 return payload
 
             account = account_from_bridge(raw)
-            deals = deals_from_bridge(raw)
+            raw_deals = deals_from_bridge(raw)
             positions = positions_from_bridge(raw)
             term_meta = {
                 "id": (term or {}).get("id") or "ea_bridge",
@@ -496,6 +515,7 @@ def get_live_payload() -> Dict[str, Any]:
                 prop_snapshot, profile
             )
             server_utc_offset_seconds = _server_utc_offset_from_bridge(raw)
+            deals = _attach_utc_deal_times(raw_deals, server_utc_offset_seconds)
             payload = build_prop_payload(
                 account=account,
                 deal_list=deals,
@@ -506,6 +526,7 @@ def get_live_payload() -> Dict[str, Any]:
                 day_start_reference=bridge_day_ref,
                 day_reference_quality=bridge_day_quality,
                 server_utc_offset_seconds=server_utc_offset_seconds,
+                deal_times_are_utc=(server_utc_offset_seconds is not None),
             )
             payload["ok"] = True
             payload["terminals"] = list_terminals(cfg)
@@ -636,9 +657,14 @@ def get_live_payload() -> Dict[str, Any]:
                 "terminal": {"id": term.get("id"), "label": term.get("label"), "path": path},
             }
 
+    configured_server_offset = term.get("server_utc_offset_seconds")
+    normalized_deals = _attach_utc_deal_times(
+        deals or [],
+        configured_server_offset,
+    )
     payload = build_prop_payload(
         account=account,
-        deal_list=deals or [],
+        deal_list=normalized_deals,
         open_positions=positions or [],
         profile=profile,
         now=datetime.now(timezone.utc),
@@ -648,7 +674,8 @@ def get_live_payload() -> Dict[str, Any]:
             "path": path,
             "active": True,
         },
-        server_utc_offset_seconds=term.get("server_utc_offset_seconds"),
+        server_utc_offset_seconds=configured_server_offset,
+        deal_times_are_utc=(configured_server_offset is not None),
     )
     payload["ok"] = True
     payload["terminals"] = list_terminals(cfg)
