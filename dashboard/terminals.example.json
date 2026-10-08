@@ -23,7 +23,8 @@
       "id": "mt5_default",
       "label": "MetaTrader 5",
       "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
-      "enabled": true
+      "enabled": true,
+      "server_utc_offset_seconds": null
     }
   ]
 }
