@@ -190,6 +190,7 @@ def build_prop_payload(
     day_start_reference: Optional[float] = None,
     day_reference_quality: str = "reconstructed_balance",
     server_utc_offset_seconds: Optional[int] = None,
+    deal_times_are_utc: bool = True,
 ) -> Dict[str, Any]:
     """Assemble full dashboard JSON from account + deals (no MT5 calls)."""
     profile = normalize_profile(profile=profile)
